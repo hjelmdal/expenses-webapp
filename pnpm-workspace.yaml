@@ -1,0 +1,11 @@
+# Supply-chain-værn (org-krav): en pakkeversion skal være mindst 3 døgn gammel,
+# før den må installeres. Værdien er i MINUTTER (3 * 24 * 60).
+minimumReleaseAge: 4320
+
+packages: []
+
+allowBuilds:
+  '@parcel/watcher': true
+  esbuild: true
+  vue-demi: true
+  '@tailwindcss/oxide': true

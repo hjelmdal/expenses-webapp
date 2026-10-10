@@ -1,0 +1,6 @@
+@import "tailwindcss";
+@import "@nuxt/ui";
+
+:root { --ui-primary: var(--color-teal-700); }
+html, body { -webkit-tap-highlight-color: transparent; }
+body { padding-bottom: env(safe-area-inset-bottom); }

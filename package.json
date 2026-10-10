@@ -1,0 +1,22 @@
+{
+  "name": "expenses",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "build": "nuxt build",
+    "dev": "nuxt dev",
+    "preview": "nuxt preview",
+    "postinstall": "nuxt prepare"
+  },
+  "dependencies": {
+    "@nuxt/ui": "^4.9.0",
+    "jose": "^6.0.11",
+    "nuxt": "^4.4.8",
+    "tailwindcss": "^4.3.2",
+    "vue": "^3.5.38",
+    "vue-router": "^5.1.0"
+  },
+  "devDependencies": {
+    "@iconify-json/lucide": "^1.2.115"
+  }
+}
