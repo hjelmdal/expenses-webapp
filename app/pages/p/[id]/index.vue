@@ -155,6 +155,12 @@ async function saveQuick() {
 }
 
 const base = computed(() => p.value?.base_currency || 'DKK')
+// Farvekode i listen: ud (udgift) = rød, ind (indtægt) = grøn, hævning = blå (penge flyttes til pungen).
+function flow(e: any) {
+  if (e.kind === 'income') return { sign: '+', text: 'text-success', bg: 'bg-success/10' }
+  if (e.kind === 'withdrawal') return { sign: '+', text: 'text-info', bg: 'bg-info/10' }
+  return { sign: '−', text: 'text-error', bg: 'bg-error/10' }
+}
 function rowTitle(e: any) {
   return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.status === 'reading' ? 'Aflæser kvittering…' : 'Udgift')
 }
@@ -192,6 +198,26 @@ const splitShort = (e: any) => {
           <span v-for="(v, c) in s.byCurrency" :key="c" class="tabular-nums">{{ money(v, String(c)) }}</span>
         </div>
       </div>
+      <!-- Kontanter: hvor meget er der i pungen — tydeligt, lige under totalen -->
+      <div v-for="(v, c) in s.cash" :key="c" class="rounded-2xl border border-default p-4">
+        <div class="flex items-start justify-between gap-2">
+          <div>
+            <div class="flex items-center gap-1.5 text-sm text-muted"><UIcon name="i-lucide-wallet" class="size-4" /> Kontanter i pungen ca.</div>
+            <div class="text-3xl font-semibold tabular-nums" :class="v < 0 ? 'text-error' : ''">{{ money(v, String(c)) }}</div>
+            <div v-if="s.cashRate[c] && String(c) !== base" class="text-sm text-muted tabular-nums">≈ {{ money(v * s.cashRate[c], base) }}</div>
+          </div>
+          <UButton size="sm" variant="soft" color="neutral" icon="i-lucide-calculator" label="Tæl op" @click="openCount(String(c))" />
+        </div>
+        <div v-if="s.cashIn[c]" class="mt-3 h-2 overflow-hidden rounded-full bg-error/20">
+          <div class="h-full rounded-full bg-success transition-all" :style="{ width: `${Math.max(0, Math.min(100, v / s.cashIn[c] * 100))}%` }" />
+        </div>
+        <div class="mt-2 flex justify-between text-xs tabular-nums">
+          <span class="flex items-center gap-1"><span class="size-2 rounded-full bg-success" />Ind {{ money(s.cashIn[c] || 0, String(c)) }}</span>
+          <span class="flex items-center gap-1"><span class="size-2 rounded-full bg-error" />Ud {{ money(s.cashOut[c] || 0, String(c)) }}</span>
+        </div>
+        <div v-if="s.cashRate[c]" class="mt-1 text-xs text-muted">Kontantkurs {{ (s.cashRate[c] * 100).toFixed(2) }} {{ base }} pr. 100 {{ c }}</div>
+      </div>
+
       <div class="grid grid-cols-2 gap-2 text-sm">
         <div class="rounded-xl border border-default p-3">
           <div class="text-muted">Drikkepenge</div>
@@ -207,18 +233,9 @@ const splitShort = (e: any) => {
           <div class="text-muted">Ikke fordelt</div>
           <div class="font-medium tabular-nums">{{ money(s.unsplit, base) }}</div>
         </div>
-        <div v-for="(v, c) in s.cash" :key="c" class="col-span-2 rounded-xl border border-default p-3">
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="text-muted">Kontanter tilbage ca.</div>
-              <div class="text-lg font-medium tabular-nums" :class="v < 0 ? 'text-error' : ''">{{ money(v, String(c)) }}</div>
-            </div>
-            <UButton size="sm" variant="soft" color="neutral" icon="i-lucide-calculator" label="Tæl op" @click="openCount(String(c))" />
-          </div>
-          <div class="mt-1 text-xs text-muted tabular-nums">
-            hævet {{ money(s.cashIn[c] || 0, String(c)) }} · brugt {{ money(s.cashOut[c] || 0, String(c)) }}
-            <span v-if="s.cashRate[c]"> · kurs {{ (s.cashRate[c] * 100).toFixed(2) }} {{ base }}/100</span>
-          </div>
+        <div v-if="s.income" class="rounded-xl border border-default p-3">
+          <div class="text-muted">Indtægter</div>
+          <div class="font-medium tabular-nums">{{ money(s.income, base) }}</div>
         </div>
         <div v-for="(t, c) in s.tab" :key="'tab-' + c" class="col-span-2 rounded-xl border border-warning/50 bg-warning/5 p-3">
           <div class="flex items-start justify-between">
@@ -229,10 +246,6 @@ const splitShort = (e: any) => {
             </div>
             <UButton size="sm" icon="i-lucide-check" label="Betal" @click="openSettle(String(c), t.amount)" />
           </div>
-        </div>
-        <div v-if="s.income" class="rounded-xl border border-default p-3">
-          <div class="text-muted">Indtægter</div>
-          <div class="font-medium tabular-nums">{{ money(s.income, base) }}</div>
         </div>
       </div>
       <details v-if="s.perParticipant.some((x: any) => x.share || x.paid)" class="rounded-xl border border-default p-3 text-sm">
@@ -273,19 +286,19 @@ const splitShort = (e: any) => {
         <div class="divide-y divide-default overflow-hidden rounded-xl border border-default">
           <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" @action="k => rowAction(k, e)">
           <NuxtLink :to="`/p/${id}/e/${e.id}`" draggable="false" class="flex select-none items-center gap-3 p-3 active:bg-elevated">
-            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-elevated">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-full" :class="flow(e).bg">
               <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
-              <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" />
-              <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5 text-success" />
-              <UIcon v-else :name="e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-pencil'" class="size-5" />
+              <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" :class="flow(e).text" />
+              <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5" :class="flow(e).text" />
+              <UIcon v-else :name="e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right'" class="size-5" :class="flow(e).text" />
             </div>
             <div class="min-w-0 flex-1">
               <div class="truncate font-medium">{{ rowTitle(e) }}</div>
               <div class="truncate text-xs text-muted">{{ rowMeta(e) }}</div>
             </div>
             <div class="text-right tabular-nums">
-              <div class="font-medium" :class="e.kind === 'income' ? 'text-success' : ''">{{ e.amount != null ? money(e.amount, e.currency) : '—' }}</div>
+              <div class="font-medium" :class="flow(e).text">{{ e.amount != null ? flow(e).sign + money(e.amount, e.currency) : '—' }}</div>
               <div v-if="e.currency !== base && e.base_value != null" class="text-xs text-muted">{{ money(e.base_value, base) }}</div>
             </div>
           </NuxtLink>
