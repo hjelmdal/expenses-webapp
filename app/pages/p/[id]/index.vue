@@ -18,6 +18,17 @@ onBeforeUnmount(() => clearInterval(timer))
 // så "Fortryd" kan nå at stoppe den — i stedet for en bekræftelsesdialog.
 const ROW_ACTIONS = [{ key: 'delete', icon: 'i-lucide-trash-2', label: 'Slet', color: 'error' as const }]
 const hidden = ref(new Set<number>())
+// Tryk på en kategori i fordelingen filtrerer listen.
+const catFilter = ref<string | null>(null)
+const catRows = computed(() => {
+  const by = s.value?.byCategory || {}
+  const total = Object.values(by).reduce((a: number, b: any) => a + b, 0) as number
+  const max = Math.max(0, ...Object.values(by) as number[])
+  return Object.entries(by).map(([key, v]: [string, any]) => {
+    const c = categoryOf(key)
+    return { key, label: c?.label || 'Ikke kategoriseret', icon: c?.icon || 'i-lucide-tag', value: v, pct: total ? Math.round(v / total * 100) : 0, w: max ? v / max * 100 : 0 }
+  })
+})
 function rowAction(key: string, e: any) {
   if (key !== 'delete') return
   hidden.value = new Set([...hidden.value, e.id])
@@ -39,7 +50,7 @@ function rowAction(key: string, e: any) {
 
 const days = computed(() => {
   const g: { day: string, items: any[], total: number }[] = []
-  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id))) {
+  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id) && (!catFilter.value || (x.kind === 'expense' && (x.category || 'none') === catFilter.value)))) {
     let d = g.find(x => x.day === e.occurred_at)
     if (!d) g.push(d = { day: e.occurred_at, items: [], total: 0 })
     d.items.push(e)
@@ -197,15 +208,17 @@ async function saveQuick() {
 const base = computed(() => p.value?.base_currency || 'DKK')
 // Farvekode i listen: ud (udgift) = rød, ind (indtægt) = grøn, hævning = blå (penge flyttes til pungen).
 function flow(e: any) {
-  if (e.kind === 'income') return { sign: '+', text: 'text-success', bg: 'bg-success/10' }
-  if (e.kind === 'withdrawal') return { sign: '+', text: 'text-info', bg: 'bg-info/10' }
-  if (e.kind === 'deposit') return { sign: '', text: 'text-warning', bg: 'bg-warning/10' }
-  return { sign: '−', text: 'text-error', bg: 'bg-error/10' }
+  if (e.kind === 'income') return { sign: '+', text: 'text-success' }
+  if (e.kind === 'withdrawal') return { sign: '+', text: 'text-info' }
+  if (e.kind === 'deposit') return { sign: '', text: 'text-warning' }
+  return { sign: '−', text: 'text-error' }
 }
 function rowTitle(e: any) {
   return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.status === 'reading' ? 'Aflæser kvittering…' : 'Udgift')
 }
+const rowIcon = (e: any) => categoryOf(e.category)?.icon || (e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right')
 const rowMeta = (e: any) => [
+  e.kind === 'expense' ? categoryOf(e.category)?.label || '' : '',
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
   e.method === 'room' ? (e.settled_at ? 'regning betalt' : 'på regning') : '',
@@ -317,6 +330,22 @@ const splitShort = (e: any) => {
           </div>
         </div>
       </div>
+      <!-- Fordeling pr. kategori: én serie, én farve, navn + beløb direkte ved hver bjælke. -->
+      <div v-if="catRows.length" class="rounded-xl border border-default p-3 text-sm">
+        <div class="mb-2 font-medium">Kategorier</div>
+        <button v-for="r in catRows" :key="r.key" type="button" class="block w-full rounded-lg px-1 py-1.5 text-left"
+          :class="catFilter && catFilter !== r.key ? 'opacity-50' : ''" :aria-pressed="catFilter === r.key"
+          :title="`${r.label}: ${money(r.value, base)} (${r.pct} %)`" @click="catFilter = catFilter === r.key ? null : r.key">
+          <div class="flex items-center justify-between gap-2">
+            <span class="flex min-w-0 items-center gap-1.5"><UIcon :name="r.icon" class="size-4 shrink-0 text-muted" /><span class="truncate">{{ r.label }}</span></span>
+            <span class="shrink-0 tabular-nums">{{ money(r.value, base) }} <span class="text-muted">· {{ r.pct }} %</span></span>
+          </div>
+          <div class="mt-1 h-1.5 rounded-full bg-elevated">
+            <div class="h-full rounded-full bg-primary" :style="{ width: `${Math.max(r.w, 2)}%` }" />
+          </div>
+        </button>
+      </div>
+
       <details v-if="s.perParticipant.some((x: any) => x.share || x.paid)" class="rounded-xl border border-default p-3 text-sm">
         <summary class="cursor-pointer font-medium">Fordeling pr. person</summary>
         <table class="mt-2 w-full tabular-nums">
@@ -345,6 +374,10 @@ const splitShort = (e: any) => {
 
     <!-- Poster -->
     <section class="px-4">
+      <div v-if="catFilter" class="mb-3 flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-sm">
+        <span>Viser: <b>{{ categoryOf(catFilter)?.label || 'Ikke kategoriseret' }}</b></span>
+        <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-x" label="Vis alle" @click="catFilter = null" />
+      </div>
       <div v-if="!days.length" class="rounded-xl border border-dashed border-default p-8 text-center text-muted">
         Tag et billede af første kvittering, eller indtast et beløb.
       </div>
@@ -355,13 +388,13 @@ const splitShort = (e: any) => {
         <div class="divide-y divide-default overflow-hidden rounded-xl border border-default">
           <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" @action="k => rowAction(k, e)">
           <NuxtLink :to="`/p/${id}/e/${e.id}`" draggable="false" class="flex select-none items-center gap-3 p-3 active:bg-elevated">
-            <div class="flex size-9 shrink-0 items-center justify-center rounded-full" :class="flow(e).bg">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
               <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
-              <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" :class="flow(e).text" />
-              <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5" :class="flow(e).text" />
-              <UIcon v-else-if="e.kind === 'deposit'" name="i-lucide-lock" class="size-5" :class="flow(e).text" />
-              <UIcon v-else :name="e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right'" class="size-5" :class="flow(e).text" />
+              <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" />
+              <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5" />
+              <UIcon v-else-if="e.kind === 'deposit'" name="i-lucide-lock" class="size-5" />
+              <UIcon v-else :key="rowIcon(e)" :name="rowIcon(e)" class="size-5" />
             </div>
             <div class="min-w-0 flex-1">
               <div class="truncate font-medium">{{ rowTitle(e) }}</div>

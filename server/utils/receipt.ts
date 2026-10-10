@@ -49,8 +49,10 @@ Svar KUN med ét JSON-objekt, ingen anden tekst:
   "service_charge": number | null,                 // trykt service charge / service fee (fx 10 %). Er IKKE tip — tip er det kunden selv giver
   "fee": number | null,                            // ATM-/bankgebyr på hævninger
   "method": "card" | "cash" | "room" | null,       // KUN ud fra tydelige tegn: "room" hvis værelsesnr./underskrift faktisk er UDFYLDT eller der står "charge to room"; "card" ved kortkvittering/kortnummer; "cash" hvis der står kontant/change. Tomme fortrykte felter (Room No ...., Signature ....) betyder IKKE room. I tvivl: null
+  "category": string | null,                       // udgiftens kategori — én af nøglerne nedenfor
   "note": string | null                            // kort note hvis noget er usikkert eller ulæseligt
 }
+Kategorier (brug nøglen): ${CATEGORIES.map(c => `${c.key} = ${c.label} (${c.hint})`).join('; ')}.
 Regler: Hvis der er en håndskrevet tip og et håndskrevet total, så brug det håndskrevne total. Hvis kun tip er håndskrevet, så total = trykt beløb + tip.
 Beløb som tal uden tusindtalsseparator (1250.5). Gæt ikke — brug null, hvis du ikke kan læse det.`
 
@@ -77,6 +79,7 @@ async function readOne(entryId: number) {
   if (fresh.amount == null && total != null) upd.amount = total
   if (!fresh.tip && num(json.tip)) upd.tip = num(json.tip)
   if (!fresh.service && num(json.service_charge)) upd.service = num(json.service_charge)
+  if (!fresh.category && CATEGORY_KEYS.includes(json.category)) upd.category = json.category
   if (!fresh.merchant && json.merchant) upd.merchant = String(json.merchant).slice(0, 200)
   if (!fresh.description && json.description) upd.description = String(json.description).slice(0, 500)
   if (json.currency && /^[A-Z]{3}$/.test(json.currency) && fresh.amount == null) upd.currency = json.currency
@@ -90,12 +93,16 @@ async function readOne(entryId: number) {
   const keys = Object.keys(upd)
   db.prepare(`UPDATE entries SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = datetime('now') WHERE id = ?`)
     .run(...keys.map(k => upd[k]), entryId)
+  if (!fresh.category && !upd.category) queueCategorize(entryId)
 }
 
-function runClaude(prompt: string): Promise<string> {
+export function runClaude(prompt: string, opts: { model?: string, read?: boolean } = {}): Promise<string> {
   return new Promise((resolve, reject) => {
     const bin = useRuntimeConfig().claudeBin as string
-    const ch = spawn(bin, ['-p', '--model', 'sonnet', '--allowedTools', 'Read', '--add-dir', uploadsDir(), '--output-format', 'json'], {
+    const args = ['-p', '--model', opts.model || 'sonnet', '--output-format', 'json']
+    if (opts.read !== false) args.push('--allowedTools', 'Read', '--add-dir', uploadsDir())
+    else args.push('--tools', '')
+    const ch = spawn(bin, args, {
       cwd: uploadsDir(),
       env: { ...process.env, HOME: process.env.HOME || '/Users/remote', PATH: '/opt/homebrew/bin:/usr/bin:/bin:/usr/sbin:/sbin' },
       stdio: ['pipe', 'pipe', 'pipe'],

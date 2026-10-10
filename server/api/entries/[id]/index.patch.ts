@@ -4,5 +4,8 @@ export default defineEventHandler(async (event) => {
   const keys = Object.keys(u)
   if (keys.length) useDb().prepare(`UPDATE entries SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = datetime('now') WHERE id = ?`)
     .run(...keys.map(k => u[k]), entry.id)
+  // Ny tekst på en ukategoriseret udgift: lad Claude foreslå en kategori.
+  const after = useDb().prepare('SELECT kind, category, status FROM entries WHERE id = ?').get(entry.id) as any
+  if (after?.kind === 'expense' && !after.category && after.status === 'ready' && ('merchant' in u || 'description' in u)) queueCategorize(entry.id)
   return { ok: true }
 })

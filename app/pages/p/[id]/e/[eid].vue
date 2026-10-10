@@ -17,7 +17,7 @@ function load() {
   if (!e) return
   Object.assign(f, {
     kind: e.kind, occurred_at: e.occurred_at, merchant: e.merchant || '', description: e.description || '',
-    amount: e.amount ?? '', tip: e.tip || '', service: e.service || '', tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
+    amount: e.amount ?? '', tip: e.tip || '', service: e.service || '', category: e.category || null, tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
     paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '',
   })
   splitMode.value = e.split?.mode || 'none'
@@ -172,6 +172,17 @@ const rateText = computed(() => {
 
       <UFormField label="Sted"><UInput v-model="f.merchant" class="w-full" /></UFormField>
       <UFormField label="Beskrivelse"><UTextarea v-model="f.description" :rows="2" autoresize class="w-full" /></UFormField>
+
+      <UFormField v-if="f.kind === 'expense'" label="Kategori" :help="!f.category ? 'Claude foreslår en ud fra kvittering/beskrivelse — eller vælg selv' : undefined">
+        <div class="grid grid-cols-2 gap-1.5">
+          <button v-for="c in CATEGORIES" :key="c.key" type="button"
+            class="flex items-center gap-2 rounded-lg border px-2.5 py-2 text-left text-sm"
+            :class="f.category === c.key ? 'border-primary bg-primary/10 font-medium' : 'border-default text-muted'"
+            @click="f.category = f.category === c.key ? null : c.key">
+            <UIcon :name="c.icon" class="size-4 shrink-0" />{{ c.label }}
+          </button>
+        </div>
+      </UFormField>
 
       <UFormField v-if="f.kind !== 'withdrawal'" label="Betalt med">
         <MethodPicker v-model="f.method" :room="f.kind === 'expense'" :later="f.kind === 'expense'" />

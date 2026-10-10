@@ -21,6 +21,6 @@ export default defineEventHandler(async (event) => {
   if (hasImages) {
     try { saveImages(id, entryId, parts!) } catch (e) { db.prepare('DELETE FROM entries WHERE id = ?').run(entryId); throw e }
     queueReceipt(entryId)
-  }
+  } else if (row.kind === 'expense' && !(row as any).category) queueCategorize(entryId)
   return { id: entryId }
 })

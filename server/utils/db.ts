@@ -103,5 +103,6 @@ function migrate(d: DatabaseSync) {
   add('settled_at', 'TEXT')                        // regning: dato hvor hotelregningen blev betalt (NULL = åben)
   add('settled_method', 'TEXT')                    // regning: card | cash
   add('refunded', 'REAL NOT NULL DEFAULT 0')        // depositum: beløb der er kommet retur (fuldt ved "fået tilbage", rest ved modregning)
-  add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
+  add('service', 'REAL NOT NULL DEFAULT 0')
+  add('category', 'TEXT')                          // se shared/utils/categories.ts; NULL = ikke kategoriseret endnu         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
 }

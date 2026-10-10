@@ -79,6 +79,7 @@ export async function loadLedger(projectId: number) {
   for (const p of participants) per[p.id] = { share: 0, paid: 0 }
   let spent = 0, income = 0, tips = 0, service = 0, unsplit = 0, unconverted = 0, reading = 0
   const byCurrency: Record<string, number> = {}
+  const byCategory: Record<string, number> = {}
   // Kontanter pr. valuta: hævet − brugt. "Brugt" er kontantposter, kontant-tip på
   // kort/regning, og hotelregninger der er betalt kontant.
   const cashIn: Record<string, number> = {}
@@ -117,6 +118,7 @@ export async function loadLedger(projectId: number) {
     byCurrency[e.currency] = (byCurrency[e.currency] || 0) + amt
     if (e.base_value == null) { if (amt) unconverted++; continue }
     spent += e.base_value
+    byCategory[e.category || 'none'] = (byCategory[e.category || 'none'] || 0) + e.base_value
     tips += e.base_tip || 0
     service += e.base_service || 0
     if (e.paid_by && per[e.paid_by]) per[e.paid_by].paid += e.base_value
@@ -132,7 +134,8 @@ export async function loadLedger(projectId: number) {
     project, participants, members, entries,
     summary: {
       base, spent: round2(spent), income: round2(income), tips: round2(tips), service: round2(service), unsplit: round2(unsplit),
-      unconverted, reading, byCurrency, cashRate, tab, deposits, due,
+      unconverted, reading, byCurrency,
+      byCategory: Object.fromEntries(Object.entries(byCategory).map(([k, v]) => [k, round2(v)]).sort((a, b) => b[1] - a[1])), cashRate, tab, deposits, due,
       cash: Object.fromEntries([...new Set([...Object.keys(cashIn), ...Object.keys(cashOut)])].map(c => [c, round2((cashIn[c] || 0) - (cashOut[c] || 0))])),
       cashIn, cashOut,
       perParticipant: participants.map(p => ({
