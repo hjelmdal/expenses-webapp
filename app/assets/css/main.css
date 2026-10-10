@@ -6,3 +6,29 @@
 .dark { --ui-primary: var(--color-teal-400); }
 html, body { -webkit-tap-highlight-color: transparent; }
 body { padding-bottom: env(safe-area-inset-bottom); }
+
+/* ── Sideskift som en iOS-navigationsstak ──────────────────────────────────
+   Frem: den nye side glider ind fra højre over den gamle, der glider lidt til
+   venstre og dæmpes. Tilbage: omvendt. Retningen sættes af nav-direction-pluginet. */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: 420ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+  animation-fill-mode: both;
+  mix-blend-mode: normal;
+}
+html[data-nav="forward"]::view-transition-old(root) { animation-name: vt-push-under; }
+html[data-nav="forward"]::view-transition-new(root) { animation-name: vt-slide-in; z-index: 2; box-shadow: -10px 0 30px rgb(0 0 0 / 0.18); }
+html[data-nav="back"]::view-transition-old(root) { animation-name: vt-slide-out; z-index: 2; box-shadow: -10px 0 30px rgb(0 0 0 / 0.18); }
+html[data-nav="back"]::view-transition-new(root) { animation-name: vt-pop-under; }
+html[data-nav="fade"]::view-transition-old(root),
+html[data-nav="fade"]::view-transition-new(root) { animation-duration: 200ms; }
+
+@keyframes vt-slide-in   { from { transform: translateX(100%); } to { transform: translateX(0); } }
+@keyframes vt-slide-out  { from { transform: translateX(0); } to { transform: translateX(100%); } }
+@keyframes vt-push-under { from { transform: translateX(0); filter: brightness(1); } to { transform: translateX(-30%); filter: brightness(0.82); } }
+@keyframes vt-pop-under  { from { transform: translateX(-30%); filter: brightness(0.82); } to { transform: translateX(0); filter: brightness(1); } }
+
+@media (prefers-reduced-motion: reduce) {
+  ::view-transition-old(root), ::view-transition-new(root) { animation: none; }
+}

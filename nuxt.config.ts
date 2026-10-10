@@ -7,6 +7,9 @@ export default defineNuxtConfig({
   modules: ['@nuxt/ui'],
   css: ['~/assets/css/main.css'],
   ssr: false,
+  // Native-agtige sideskift (se app/plugins/nav-direction.client.ts + main.css).
+  // Browsere uden View Transitions skifter bare side uden animation.
+  experimental: { viewTransition: true },
   // Egen build-mappe til testserveren, så den ikke deler .nuxt (og dev-låsen)
   // med manager'ens dev-server og vælter den — det fik dev-PWA'en til at genindlæse.
   buildDir: process.env.EXPENSES_BUILD_DIR || '.nuxt',

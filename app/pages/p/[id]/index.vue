@@ -14,9 +14,32 @@ watch(() => s.value?.reading, (n) => {
 }, { immediate: true })
 onBeforeUnmount(() => clearInterval(timer))
 
+// --- Quick actions (swipe til venstre på en post). Sletning venter et øjeblik,
+// så "Fortryd" kan nå at stoppe den — i stedet for en bekræftelsesdialog.
+const ROW_ACTIONS = [{ key: 'delete', icon: 'i-lucide-trash-2', label: 'Slet', color: 'error' as const }]
+const hidden = ref(new Set<number>())
+function rowAction(key: string, e: any) {
+  if (key !== 'delete') return
+  hidden.value = new Set([...hidden.value, e.id])
+  let undone = false
+  const timer = setTimeout(async () => {
+    if (undone) return
+    try { await api(`/entries/${e.id}`, { method: 'DELETE' }) } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
+    await refresh()
+    hidden.value.delete(e.id)
+  }, 5000)
+  toast.add({
+    title: `“${rowTitle(e)}” slettet`, duration: 5000, icon: 'i-lucide-trash-2',
+    actions: [{ label: 'Fortryd', color: 'neutral', variant: 'outline', onClick: () => {
+      undone = true; clearTimeout(timer)
+      const s = new Set(hidden.value); s.delete(e.id); hidden.value = s
+    } }],
+  })
+}
+
 const days = computed(() => {
   const g: { day: string, items: any[], total: number }[] = []
-  for (const e of data.value?.entries || []) {
+  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id))) {
     let d = g.find(x => x.day === e.occurred_at)
     if (!d) g.push(d = { day: e.occurred_at, items: [], total: 0 })
     d.items.push(e)
@@ -248,7 +271,8 @@ const splitShort = (e: any) => {
           <span>{{ dayLabel(d.day) }}</span><span class="tabular-nums">{{ money(d.total, base) }}</span>
         </div>
         <div class="divide-y divide-default overflow-hidden rounded-xl border border-default">
-          <NuxtLink v-for="e in d.items" :key="e.id" :to="`/p/${id}/e/${e.id}`" class="flex items-center gap-3 p-3 active:bg-elevated">
+          <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" @action="k => rowAction(k, e)">
+          <NuxtLink :to="`/p/${id}/e/${e.id}`" draggable="false" class="flex select-none items-center gap-3 p-3 active:bg-elevated">
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-elevated">
               <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
@@ -265,6 +289,7 @@ const splitShort = (e: any) => {
               <div v-if="e.currency !== base && e.base_value != null" class="text-xs text-muted">{{ money(e.base_value, base) }}</div>
             </div>
           </NuxtLink>
+          </SwipeRow>
         </div>
       </div>
     </section>
