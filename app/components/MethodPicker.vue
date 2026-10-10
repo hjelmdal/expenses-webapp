@@ -1,11 +1,12 @@
 <script setup lang="ts">
-// Betalingsmåde: kort · kontant · (hotel)regning. Regning kan slås fra (fx ved afregning).
+// Betalingsmåde: kort · kontant · (hotel)regning · delvist (rest betales senere). Regning/senere kan slås fra.
 const model = defineModel<string>({ required: true })
-const props = withDefaults(defineProps<{ room?: boolean, size?: 'sm' | 'md' }>(), { room: true, size: 'md' })
+const props = withDefaults(defineProps<{ room?: boolean, later?: boolean, size?: 'sm' | 'md' }>(), { room: true, later: false, size: 'md' })
 const options = computed(() => [
   { value: 'card', label: 'Kort', icon: 'i-lucide-credit-card' },
   { value: 'cash', label: 'Kontant', icon: 'i-lucide-banknote' },
   ...(props.room ? [{ value: 'room', label: 'Regning', icon: 'i-lucide-hotel' }] : []),
+  ...(props.later ? [{ value: 'later', label: 'Delvist', icon: 'i-lucide-clock' }] : []),
 ])
 </script>
 

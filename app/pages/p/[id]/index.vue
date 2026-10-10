@@ -104,18 +104,55 @@ async function onFiles(ev: Event) {
 
 // --- Hotelregning: afregn alle åbne regningsposter på én gang
 const settleOpen = ref(false)
-const st = reactive<any>({ currency: '', total: 0, method: 'card', paid_by: null, base_amount: '', date: '' })
+const st = reactive<any>({ currency: '', total: 0, method: 'card', paid_by: null, base_amount: '', date: '', use_deposits: false })
+const stDeposit = computed(() => s.value?.deposits?.[st.currency]?.amount || 0)
+const stRemainder = computed(() => Math.max(0, st.total - (st.use_deposits ? stDeposit.value : 0)))
+const stBack = computed(() => st.use_deposits ? Math.max(0, stDeposit.value - st.total) : 0)
 function openSettle(currency: string, total: number) {
-  Object.assign(st, { currency, total, method: 'card', paid_by: payer.value, base_amount: '', date: localDate() })
+  Object.assign(st, { currency, total, method: 'card', paid_by: payer.value, base_amount: '', date: localDate(), use_deposits: false })
   settleOpen.value = true
 }
 async function settle() {
   try {
     const r = await api<any>(`/projects/${id}/settle`, { method: 'POST', body: st })
     settleOpen.value = false
-    toast.add({ title: `Regningen er betalt (${r.settled} poster)`, color: 'success' })
+    toast.add({
+      title: `Regningen er betalt (${r.settled} poster)`,
+      description: [r.applied ? `${money(r.applied, st.currency)} dækket af depositum` : '', r.refunded ? `${money(r.refunded, st.currency)} kommer retur` : ''].filter(Boolean).join(' · ') || undefined,
+      color: 'success',
+    })
     await refresh()
   } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) }
+}
+
+// --- Depositum retur
+const refundOpen = ref(false)
+const refundCur = ref('')
+const openDeposits = computed(() => (data.value?.entries || []).filter((e: any) => e.kind === 'deposit' && !e.settled_at && e.currency === refundCur.value))
+function openRefund(c: string) { refundCur.value = c; refundOpen.value = true }
+async function refundOne(e: any) {
+  try {
+    await api(`/entries/${e.id}/refund`, { method: 'POST', body: { date: localDate() } })
+    toast.add({ title: e.method === 'cash' ? 'Depositum retur — lagt tilbage i pungen' : 'Depositum frigivet', color: 'success' })
+    await refresh()
+    if (!openDeposits.value.length) refundOpen.value = false
+  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
+}
+
+// --- Betal rest på en "betales senere"-post
+const payOpen = ref(false)
+const pay = reactive<any>({ id: 0, title: '', currency: '', amount: '', method: 'cash', paid_by: null, date: '' })
+function openPay(d: any) {
+  Object.assign(pay, { id: d.id, title: d.title, currency: d.currency, amount: String(d.remaining), method: defMethod.value === 'cash' ? 'cash' : 'card', paid_by: payer.value, date: localDate() })
+  payOpen.value = true
+}
+async function savePay() {
+  try {
+    await api(`/entries/${pay.id}/payments`, { method: 'POST', body: pay })
+    payOpen.value = false
+    toast.add({ title: 'Betaling registreret', color: 'success' })
+    await refresh()
+  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
 }
 
 // --- Optælling af kontanter
@@ -135,11 +172,11 @@ async function count() {
 
 // --- Hurtig indtastning
 const quick = ref(false)
-const q = reactive({ kind: 'expense', amount: '', currency: '', description: '', method: 'card', base_amount: '', occurred_at: '', tip: '', tip_cash: false })
+const q = reactive({ kind: 'expense', amount: '', currency: '', description: '', method: 'card', base_amount: '', occurred_at: '', tip: '', tip_cash: false, paid_now: '', paid_method: 'card' })
 const today = () => localDate()
 const yesterday = () => localDate(new Date(Date.now() - 864e5))
 function openQuick(kind = 'expense') {
-  Object.assign(q, { kind, amount: '', currency: p.value.currency, description: '', method: kind === 'withdrawal' ? 'cash' : defMethod.value, base_amount: '', tip: '', tip_cash: false,
+  Object.assign(q, { kind, amount: '', currency: p.value.currency, description: '', method: kind === 'withdrawal' ? 'cash' : defMethod.value, base_amount: '', tip: '', tip_cash: false, paid_now: '', paid_method: 'card',
     // Datoen huskes mellem poster i samme session — taster man gårsdagen ind, er det typisk flere.
     occurred_at: q.occurred_at || today() })
   quick.value = true
@@ -148,7 +185,10 @@ const savingQuick = ref(false)
 async function saveQuick() {
   savingQuick.value = true
   try {
-    await api(`/projects/${id}/entries`, { method: 'POST', body: { ...q, paid_by: q.kind === 'withdrawal' ? null : payer.value } })
+    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, paid_by: q.kind === 'withdrawal' ? null : payer.value } })
+    if (q.kind === 'expense' && q.method === 'later' && Number(String(q.paid_now).replace(',', '.')) > 0) {
+      await api(`/entries/${r.id}/payments`, { method: 'POST', body: { amount: q.paid_now, method: q.paid_method, paid_by: payer.value, date: q.occurred_at } })
+    }
     quick.value = false
     await refresh()
   } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { savingQuick.value = false }
@@ -159,6 +199,7 @@ const base = computed(() => p.value?.base_currency || 'DKK')
 function flow(e: any) {
   if (e.kind === 'income') return { sign: '+', text: 'text-success', bg: 'bg-success/10' }
   if (e.kind === 'withdrawal') return { sign: '+', text: 'text-info', bg: 'bg-info/10' }
+  if (e.kind === 'deposit') return { sign: '', text: 'text-warning', bg: 'bg-warning/10' }
   return { sign: '−', text: 'text-error', bg: 'bg-error/10' }
 }
 function rowTitle(e: any) {
@@ -168,6 +209,8 @@ const rowMeta = (e: any) => [
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
   e.method === 'room' ? (e.settled_at ? 'regning betalt' : 'på regning') : '',
+  e.kind === 'deposit' ? (!e.settled_at ? (e.method === 'cash' ? 'kontant · ude' : 'reserveret på kort') : e.settled_method === 'refund' ? 'fået tilbage' : 'modregnet') : '',
+  e.method === 'later' && e.amount ? (e.amount - e.paid > 0.004 ? `rest ${money(e.amount - e.paid, e.currency)}` : 'betalt') : '',
   e.tip ? `tip ${money(e.tip, e.currency)}${e.tip_cash && e.method !== 'cash' ? ' kontant' : ''}` : '',
   splitShort(e),
 ].filter(Boolean).join(' · ')
@@ -237,6 +280,32 @@ const splitShort = (e: any) => {
           <div class="text-muted">Indtægter</div>
           <div class="font-medium tabular-nums">{{ money(s.income, base) }}</div>
         </div>
+        <div v-for="(d, c) in s.deposits" :key="'dep-' + c" class="col-span-2 rounded-xl border border-warning/40 p-3">
+          <div class="flex items-start justify-between gap-2">
+            <div>
+              <div class="flex items-center gap-1.5 text-muted"><UIcon name="i-lucide-lock" class="size-4" /> Depositum ude</div>
+              <div class="text-lg font-medium tabular-nums">{{ money(d.amount, String(c)) }}</div>
+              <div class="text-xs text-muted">
+                <span v-if="d.card">{{ money(d.card, String(c)) }} reserveret på kort</span><span v-if="d.card && d.cash"> · </span><span v-if="d.cash">{{ money(d.cash, String(c)) }} kontant</span>
+                — ikke forbrug
+              </div>
+            </div>
+            <UButton size="sm" variant="soft" color="neutral" label="Fået tilbage" @click="openRefund(String(c))" />
+          </div>
+        </div>
+        <div v-if="s.due.length" class="col-span-2 rounded-xl border border-default p-3">
+          <div class="mb-1 flex items-center gap-1.5 text-muted"><UIcon name="i-lucide-clock" class="size-4" /> Mangler at betale</div>
+          <div v-for="d in s.due" :key="d.id" class="flex items-center justify-between gap-2 py-1.5">
+            <NuxtLink :to="`/p/${id}/e/${d.id}`" class="min-w-0">
+              <div class="truncate font-medium">{{ d.title }}</div>
+              <div class="text-xs text-muted tabular-nums">betalt {{ money(d.paid, d.currency) }} af {{ money(d.amount, d.currency) }}</div>
+            </NuxtLink>
+            <div class="flex items-center gap-2">
+              <span class="font-medium tabular-nums">{{ money(d.remaining, d.currency) }}</span>
+              <UButton size="sm" label="Betal" @click="openPay(d)" />
+            </div>
+          </div>
+        </div>
         <div v-for="(t, c) in s.tab" :key="'tab-' + c" class="col-span-2 rounded-xl border border-warning/50 bg-warning/5 p-3">
           <div class="flex items-start justify-between">
             <div>
@@ -291,6 +360,7 @@ const splitShort = (e: any) => {
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
               <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" :class="flow(e).text" />
               <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5" :class="flow(e).text" />
+              <UIcon v-else-if="e.kind === 'deposit'" name="i-lucide-lock" class="size-5" :class="flow(e).text" />
               <UIcon v-else :name="e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right'" class="size-5" :class="flow(e).text" />
             </div>
             <div class="min-w-0 flex-1">
@@ -311,18 +381,61 @@ const splitShort = (e: any) => {
       <template #body>
         <form class="space-y-4" @submit.prevent="settle">
           <p class="text-sm text-muted">Lukker alle åbne regningsposter ({{ money(st.total, st.currency) }}). Det bliver ikke en ny udgift — maden tæller allerede med.</p>
-          <UFormField label="Betalt med"><MethodPicker v-model="st.method" :room="false" /></UFormField>
+          <label v-if="stDeposit" class="flex items-start gap-2 rounded-lg bg-elevated p-3 text-sm">
+            <USwitch v-model="st.use_deposits" class="mt-0.5" />
+            <span>Modregn depositum ({{ money(stDeposit, st.currency) }})
+              <span class="block text-xs text-muted">
+                Rest at betale: <b class="tabular-nums">{{ money(stRemainder, st.currency) }}</b><template v-if="stBack"> · {{ money(stBack, st.currency) }} kommer retur</template>
+              </span>
+            </span>
+          </label>
+          <UFormField v-if="stRemainder > 0" :label="stDeposit && st.use_deposits ? 'Resten betalt med' : 'Betalt med'"><MethodPicker v-model="st.method" :room="false" /></UFormField>
           <UFormField v-if="people.length" label="Betalt af">
             <div class="flex flex-wrap gap-1.5">
               <UButton v-for="x in people" :key="x.id" type="button" size="sm" :variant="st.paid_by === x.id ? 'solid' : 'soft'" color="neutral"
                 :label="x.name" @click="st.paid_by = st.paid_by === x.id ? null : x.id" />
             </div>
           </UFormField>
-          <UFormField v-if="st.method === 'card'" :label="`Trukket på kontoen (${base}) — valgfrit`" help="Giver posterne den reelle kurs inkl. gebyrer">
+          <UFormField v-if="st.method === 'card' && stRemainder > 0" :label="`Trukket på kontoen (${base}) — valgfrit`" help="Giver posterne den reelle kurs inkl. gebyrer">
             <UInput v-model="st.base_amount" inputmode="decimal" class="w-full" />
           </UFormField>
           <UFormField label="Dato"><UInput v-model="st.date" type="date" class="w-full" /></UFormField>
           <UButton type="submit" block size="lg" label="Markér som betalt" />
+        </form>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="refundOpen" title="Depositum retur">
+      <template #body>
+        <div class="space-y-2">
+          <p class="text-sm text-muted">Tryk på det depositum, I har fået tilbage. Skal det i stedet bruges til at betale hotelregningen, så brug “Betal” på regningen og modregn det dér.</p>
+          <div v-for="d in openDeposits" :key="d.id" class="flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium">{{ rowTitle(d) }}</div>
+              <div class="text-xs text-muted">{{ d.method === 'cash' ? 'kontant — lægges tilbage i pungen' : 'reserveret på kort — frigives' }}</div>
+            </div>
+            <div class="flex items-center gap-2">
+              <span class="text-sm font-medium tabular-nums">{{ money(d.amount, d.currency) }}</span>
+              <UButton size="sm" icon="i-lucide-check" label="Retur" @click="refundOne(d)" />
+            </div>
+          </div>
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="payOpen" :title="`Betal: ${pay.title}`">
+      <template #body>
+        <form class="space-y-4" @submit.prevent="savePay">
+          <UFormField :label="`Beløb (${pay.currency})`"><UInput v-model="pay.amount" inputmode="decimal" size="xl" class="w-full" :ui="{ base: 'text-2xl tabular-nums' }" /></UFormField>
+          <UFormField label="Betalt med"><MethodPicker v-model="pay.method" :room="false" /></UFormField>
+          <UFormField v-if="people.length" label="Betalt af">
+            <div class="flex flex-wrap gap-1.5">
+              <UButton v-for="x in people" :key="x.id" type="button" size="sm" :variant="pay.paid_by === x.id ? 'solid' : 'soft'" color="neutral"
+                :label="x.name" @click="pay.paid_by = pay.paid_by === x.id ? null : x.id" />
+            </div>
+          </UFormField>
+          <UFormField label="Dato"><UInput v-model="pay.date" type="date" class="w-full" /></UFormField>
+          <UButton type="submit" block size="lg" label="Registrér betaling" />
         </form>
       </template>
     </UModal>
@@ -388,11 +501,7 @@ const splitShort = (e: any) => {
     <UModal v-model:open="quick" title="Ny post">
       <template #body>
         <form class="space-y-4" @submit.prevent="saveQuick">
-          <div class="grid grid-cols-3 gap-1 rounded-lg bg-elevated p-1 text-sm">
-            <button v-for="k in ['expense', 'withdrawal', 'income']" :key="k" type="button"
-              class="rounded-md py-1.5" :class="q.kind === k ? 'bg-default font-medium shadow-sm' : 'text-muted'"
-              @click="q.kind = k; q.method = k === 'withdrawal' ? 'cash' : q.method">{{ KIND_LABEL[k] }}</button>
-          </div>
+          <KindTabs v-model="q.kind" @change="k => { if (k === 'withdrawal') q.method = 'cash'; else if (k !== 'expense' && ['room', 'later'].includes(q.method)) q.method = 'card' }" />
           <div class="flex gap-2">
             <UInput v-model="q.amount" inputmode="decimal" placeholder="0" size="xl" class="flex-1" autofocus
               :ui="{ base: 'text-2xl tabular-nums' }" />
@@ -414,7 +523,15 @@ const splitShort = (e: any) => {
             <UButton type="button" size="sm" :variant="q.occurred_at === yesterday() ? 'solid' : 'soft'" color="neutral" label="I går" @click="q.occurred_at = yesterday()" />
             <UInput v-model="q.occurred_at" type="date" size="sm" class="flex-1" />
           </div>
-          <MethodPicker v-if="q.kind !== 'withdrawal'" v-model="q.method" :room="q.kind === 'expense'" />
+          <MethodPicker v-if="q.kind !== 'withdrawal'" v-model="q.method" :room="q.kind === 'expense'" :later="q.kind === 'expense'" />
+          <p v-if="q.kind === 'deposit'" class="-mt-2 text-xs text-muted">Tæller ikke som forbrug. Kort = reservation; kontant trækkes fra pungen, indtil det kommer retur.</p>
+          <div v-if="q.kind === 'expense' && q.method === 'later'" class="rounded-lg bg-elevated p-3">
+            <div class="mb-2 text-xs text-muted">Hele beløbet tæller som forbrug nu. Resten vises under “Mangler at betale”.</div>
+            <div class="flex items-center gap-2">
+              <UInput v-model="q.paid_now" inputmode="decimal" placeholder="Betalt nu (fx forudbetaling)" class="flex-1" />
+              <MethodPicker v-model="q.paid_method" :room="false" size="sm" />
+            </div>
+          </div>
           <TipInput v-if="q.kind === 'expense'" v-model:tip="q.tip" v-model:tip-cash="q.tip_cash" :method="q.method" />
           <UButton type="submit" block size="lg" :loading="savingQuick" :disabled="!q.amount" label="Gem" />
         </form>

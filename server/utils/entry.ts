@@ -1,5 +1,5 @@
 // Fælles validering af post-felter (oprettelse og redigering).
-const KINDS = ['expense', 'income', 'withdrawal']
+const KINDS = ['expense', 'income', 'withdrawal', 'deposit']
 
 export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   const u: Record<string, any> = {}
@@ -12,10 +12,10 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   if ('service' in b) u.service = numOrNull(b.service) || 0
   if ('currency' in b && normCurrency(b.currency)) u.currency = normCurrency(b.currency)
   if ('base_amount' in b) u.base_amount = numOrNull(b.base_amount)
-  if ('method' in b && ['card', 'cash', 'room'].includes(b.method)) u.method = b.method
+  if ('method' in b && ['card', 'cash', 'room', 'later'].includes(b.method)) u.method = b.method
   if ('tip_cash' in b) u.tip_cash = b.tip_cash === true || b.tip_cash === 1 || b.tip_cash === '1' || b.tip_cash === 'true' ? 1 : 0
   // Kun genåbning herfra — afregning sker samlet via /settle.
-  if (b.settled === false) { u.settled_at = null; u.settled_method = null }
+  if (b.settled === false) { u.settled_at = null; u.settled_method = null; u.refunded = 0 }
   if ('paid_by' in b) u.paid_by = participantIds.includes(Number(b.paid_by)) ? Number(b.paid_by) : null
   if ('split' in b) {
     let s = b.split
@@ -30,7 +30,10 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
     } else u.split = null
   }
   if (u.kind === 'withdrawal') { u.method = 'cash'; u.tip_cash = 0 }
-  if (u.method && u.method !== 'room') { u.settled_at = null; u.settled_method = null }
+  // Depositum betales med kort (reservation) eller kontant — ikke på regning/senere.
+  if (u.kind === 'deposit' && u.method && !['card', 'cash'].includes(u.method)) u.method = 'card'
+  if (u.kind && u.kind !== 'expense' && ['room', 'later'].includes(u.method)) u.method = 'card'
+  if (u.method && !['room', 'later'].includes(u.method) && u.kind !== 'deposit') { u.settled_at = null; u.settled_method = null }
   return u
 }
 

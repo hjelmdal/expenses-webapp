@@ -92,8 +92,27 @@ async function reread(reset: boolean) {
 }
 const viewing = ref<number | null>(null)
 const e = computed(() => data.value?.entry)
+async function refund() {
+  await save(false)
+  await api(`/entries/${eid}/refund`, { method: 'POST', body: { date: localDate() } })
+  await refresh()
+}
+const newPay = reactive({ amount: '', method: 'card' })
+async function addPayment() {
+  try {
+    await save(false)
+    await api(`/entries/${eid}/payments`, { method: 'POST', body: { ...newPay, paid_by: f.paid_by } })
+    Object.assign(newPay, { amount: '' })
+    await refresh()
+  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
+}
+async function delPayment(pid: number) {
+  if (!confirm('Fjern betalingen?')) return
+  await api(`/payments/${pid}`, { method: 'DELETE' })
+  await refresh()
+}
 async function reopen() {
-  if (!confirm('Sæt posten tilbage på den åbne hotelregning?')) return
+  if (!confirm(e.value?.kind === 'deposit' ? 'Sæt depositummet tilbage som udestående?' : 'Sæt posten tilbage på den åbne hotelregning?')) return
   await api(`/entries/${eid}`, { method: 'PATCH', body: { settled: false } })
   await refresh()
 }
@@ -137,11 +156,7 @@ const rateText = computed(() => {
         <p v-if="e.ai_note" class="mt-1 text-xs text-muted">{{ e.ai_note }}</p>
       </div>
 
-      <div class="grid grid-cols-3 gap-1 rounded-lg bg-elevated p-1 text-sm">
-        <button v-for="k in ['expense', 'withdrawal', 'income']" :key="k" type="button" class="rounded-md py-1.5"
-          :class="f.kind === k ? 'bg-default font-medium shadow-sm' : 'text-muted'"
-          @click="f.kind = k; if (k === 'withdrawal') f.method = 'cash'">{{ KIND_LABEL[k] }}</button>
-      </div>
+      <KindTabs v-model="f.kind" @change="k => { if (k === 'withdrawal') f.method = 'cash'; else if (k !== 'expense' && ['room', 'later'].includes(f.method)) f.method = 'card' }" />
 
       <div class="grid grid-cols-[1fr_6rem] gap-2">
         <UFormField label="Beløb i alt"><UInput v-model="f.amount" inputmode="decimal" size="lg" class="w-full" :ui="{ base: 'tabular-nums' }" /></UFormField>
@@ -159,13 +174,37 @@ const rateText = computed(() => {
       <UFormField label="Beskrivelse"><UTextarea v-model="f.description" :rows="2" autoresize class="w-full" /></UFormField>
 
       <UFormField v-if="f.kind !== 'withdrawal'" label="Betalt med">
-        <MethodPicker v-model="f.method" :room="f.kind === 'expense'" />
+        <MethodPicker v-model="f.method" :room="f.kind === 'expense'" :later="f.kind === 'expense'" />
       </UFormField>
       <div v-if="f.kind === 'expense' && f.method === 'room' && e.method === 'room'" class="-mt-2 flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-sm">
         <span v-if="e.settled_at">Regningen betalt {{ e.settled_at }} ({{ e.settled_method === 'cash' ? 'kontant' : 'kort' }})</span>
         <span v-else class="text-muted">På den åbne hotelregning</span>
         <UButton v-if="e.settled_at" size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
       </div>
+      <!-- Depositum: status og retur -->
+      <div v-if="f.kind === 'deposit' && e.kind === 'deposit'" class="-mt-2 flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2 text-sm">
+        <span v-if="!e.settled_at" class="text-muted">{{ e.method === 'cash' ? 'Kontant — ude af pungen' : 'Reserveret på kort' }}, tæller ikke som forbrug</span>
+        <span v-else-if="e.settled_method === 'refund'">Fået tilbage {{ e.settled_at }}</span>
+        <span v-else>Modregnet i hotelregningen {{ e.settled_at }}<template v-if="e.refunded"> · {{ money(e.refunded, e.currency) }} retur</template></span>
+        <UButton v-if="!e.settled_at" size="xs" icon="i-lucide-check" label="Fået tilbage" @click="refund" />
+        <UButton v-else size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
+      </div>
+
+      <!-- Betales senere: betalinger -->
+      <div v-if="f.kind === 'expense' && f.method === 'later'" class="-mt-2 space-y-2 rounded-lg bg-elevated p-3 text-sm">
+        <div class="flex justify-between"><span class="text-muted">Betalt</span><span class="tabular-nums">{{ money(e.paid, e.currency) }} af {{ money(Number(f.amount) || 0, e.currency) }}</span></div>
+        <div v-for="p in e.payments" :key="p.id" class="flex items-center justify-between text-xs">
+          <span>{{ p.occurred_at }} · {{ p.method === 'cash' ? 'kontant' : 'kort' }}</span>
+          <span class="flex items-center gap-1 tabular-nums">{{ money(p.amount, p.currency) }}
+            <UButton size="xs" icon="i-lucide-x" variant="ghost" color="neutral" square @click="delPayment(p.id)" /></span>
+        </div>
+        <div class="flex items-center gap-2 pt-1">
+          <UInput v-model="newPay.amount" inputmode="decimal" :placeholder="`Rest ${money(Math.max(0, (Number(f.amount) || 0) - e.paid), e.currency)}`" size="sm" class="flex-1" />
+          <MethodPicker v-model="newPay.method" :room="false" size="sm" />
+          <UButton size="sm" icon="i-lucide-plus" square :disabled="!newPay.amount" @click="addPayment" />
+        </div>
+      </div>
+
       <div v-if="f.kind === 'expense'" class="grid grid-cols-2 gap-2">
         <TipInput v-model:tip="f.tip" v-model:tip-cash="f.tip_cash" :method="f.method" />
         <UFormField label="Heraf service charge" help="Fast tillæg på regningen">

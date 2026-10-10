@@ -49,7 +49,7 @@ function migrate(d: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY,
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL DEFAULT 'expense',          -- expense | income | withdrawal
+      kind TEXT NOT NULL DEFAULT 'expense',          -- expense | income | withdrawal | deposit
       occurred_at TEXT NOT NULL,                     -- YYYY-MM-DD
       merchant TEXT,
       description TEXT,
@@ -74,6 +74,20 @@ function migrate(d: DatabaseSync) {
       mime TEXT NOT NULL,
       created_at TEXT NOT NULL DEFAULT (datetime('now'))
     );
+    -- Betalinger der ikke er selve posten: delbetalinger på "betales senere"-poster
+    -- (entry_id sat) og resten af en hotelregning efter modregnet depositum (entry_id NULL).
+    CREATE TABLE IF NOT EXISTS payments (
+      id INTEGER PRIMARY KEY,
+      project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+      entry_id INTEGER REFERENCES entries(id) ON DELETE CASCADE,
+      amount REAL NOT NULL,
+      currency TEXT NOT NULL,
+      method TEXT NOT NULL DEFAULT 'card',           -- card | cash
+      paid_by INTEGER REFERENCES participants(id) ON DELETE SET NULL,
+      occurred_at TEXT NOT NULL,
+      note TEXT,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
     CREATE TABLE IF NOT EXISTS rates (
       currency TEXT NOT NULL,
       base TEXT NOT NULL,
@@ -88,5 +102,6 @@ function migrate(d: DatabaseSync) {
   add('tip_cash', 'INTEGER NOT NULL DEFAULT 0')     // drikkepenge betalt kontant, selvom resten er kort/regning
   add('settled_at', 'TEXT')                        // regning: dato hvor hotelregningen blev betalt (NULL = åben)
   add('settled_method', 'TEXT')                    // regning: card | cash
+  add('refunded', 'REAL NOT NULL DEFAULT 0')        // depositum: beløb der er kommet retur (fuldt ved "fået tilbage", rest ved modregning)
   add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
 }
