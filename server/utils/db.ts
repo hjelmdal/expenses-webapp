@@ -57,7 +57,7 @@ function migrate(d: DatabaseSync) {
       tip REAL NOT NULL DEFAULT 0,
       currency TEXT NOT NULL,
       base_amount REAL,                              -- kun når kursen er givet (hævning/manuelt)
-      method TEXT NOT NULL DEFAULT 'card',           -- card | cash
+      method TEXT NOT NULL DEFAULT 'card',           -- card | cash | room (på hotelregningen)
       paid_by INTEGER REFERENCES participants(id) ON DELETE SET NULL,
       split TEXT,                                    -- JSON {mode, pids?, shares?} — NULL = ikke fordelt
       status TEXT NOT NULL DEFAULT 'ready',          -- ready | reading | failed
@@ -82,4 +82,11 @@ function migrate(d: DatabaseSync) {
       PRIMARY KEY (currency, base, date)
     );
   `)
+  // Kolonner tilføjet efter første udgave (2026-10-10). ALTER er idempotent via tjekket.
+  const cols = new Set((d.prepare('PRAGMA table_info(entries)').all() as any[]).map(c => c.name))
+  const add = (name: string, def: string) => { if (!cols.has(name)) d.exec(`ALTER TABLE entries ADD COLUMN ${name} ${def}`) }
+  add('tip_cash', 'INTEGER NOT NULL DEFAULT 0')     // drikkepenge betalt kontant, selvom resten er kort/regning
+  add('settled_at', 'TEXT')                        // regning: dato hvor hotelregningen blev betalt (NULL = åben)
+  add('settled_method', 'TEXT')                    // regning: card | cash
+  add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
 }

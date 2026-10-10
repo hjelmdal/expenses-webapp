@@ -9,9 +9,13 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   if ('description' in b) u.description = String(b.description ?? '').trim().slice(0, 500) || null
   if ('amount' in b) u.amount = numOrNull(b.amount)
   if ('tip' in b) u.tip = numOrNull(b.tip) || 0
+  if ('service' in b) u.service = numOrNull(b.service) || 0
   if ('currency' in b && normCurrency(b.currency)) u.currency = normCurrency(b.currency)
   if ('base_amount' in b) u.base_amount = numOrNull(b.base_amount)
-  if ('method' in b && ['card', 'cash'].includes(b.method)) u.method = b.method
+  if ('method' in b && ['card', 'cash', 'room'].includes(b.method)) u.method = b.method
+  if ('tip_cash' in b) u.tip_cash = b.tip_cash === true || b.tip_cash === 1 || b.tip_cash === '1' || b.tip_cash === 'true' ? 1 : 0
+  // Kun genåbning herfra — afregning sker samlet via /settle.
+  if (b.settled === false) { u.settled_at = null; u.settled_method = null }
   if ('paid_by' in b) u.paid_by = participantIds.includes(Number(b.paid_by)) ? Number(b.paid_by) : null
   if ('split' in b) {
     let s = b.split
@@ -25,7 +29,8 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
       u.split = Object.keys(shares).length ? JSON.stringify({ mode: 'weights', shares }) : null
     } else u.split = null
   }
-  if (u.kind === 'withdrawal') u.method = 'cash'
+  if (u.kind === 'withdrawal') { u.method = 'cash'; u.tip_cash = 0 }
+  if (u.method && u.method !== 'room') { u.settled_at = null; u.settled_method = null }
   return u
 }
 

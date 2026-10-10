@@ -83,6 +83,11 @@ const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && ru
         </div>
       </section>
 
+      <section>
+        <h2 class="mb-2 font-medium">Udseende</h2>
+        <ColorModeSwitch />
+      </section>
+
       <section class="flex flex-wrap gap-2 border-t border-default pt-6">
         <UButton color="neutral" variant="soft" :label="p.archived ? 'Genåbn' : 'Arkivér'" @click="archive" />
         <UButton color="error" variant="soft" label="Slet tur" @click="destroy" />

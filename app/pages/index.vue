@@ -4,6 +4,8 @@ const { data: projects, refresh } = await useAsyncData('projects', () => api<any
 const open = ref(false)
 const form = reactive({ name: '', currency: 'THB', base_currency: 'DKK', people: 'Far, Mor, Barn 1, Barn 2' })
 const saving = ref(false)
+const mode = useColorMode()
+const isDark = computed(() => mode.value === 'dark')
 
 async function create() {
   saving.value = true
@@ -19,7 +21,11 @@ async function create() {
   <div class="mx-auto max-w-xl p-4 pt-[max(1rem,env(safe-area-inset-top))]">
     <div class="mb-6 flex items-center justify-between">
       <h1 class="text-2xl font-semibold">Udlæg</h1>
-      <UButton icon="i-lucide-plus" label="Ny tur" @click="open = true" />
+      <div class="flex items-center gap-1">
+        <UButton :icon="isDark ? 'i-lucide-sun' : 'i-lucide-moon'" variant="ghost" color="neutral" square
+          :aria-label="isDark ? 'Lys tilstand' : 'Mørk tilstand'" @click="mode.preference = isDark ? 'light' : 'dark'" />
+        <UButton icon="i-lucide-plus" label="Ny tur" @click="open = true" />
+      </div>
     </div>
 
     <div v-if="!projects?.length" class="rounded-xl border border-dashed border-default p-8 text-center text-muted">
@@ -36,6 +42,11 @@ async function create() {
         </div>
         <UIcon name="i-lucide-chevron-right" class="size-5 text-muted" />
       </NuxtLink>
+    </div>
+
+    <div class="mt-10">
+      <div class="mb-2 text-sm text-muted">Udseende</div>
+      <ColorModeSwitch />
     </div>
 
     <UModal v-model:open="open" title="Ny tur eller projekt">

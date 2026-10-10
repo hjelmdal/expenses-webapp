@@ -40,15 +40,15 @@ Billederne hører til ÉN post (fx regning + kortkvittering, eller flere sider a
 Svar KUN med ét JSON-objekt, ingen anden tekst:
 {
   "kind": "expense" | "withdrawal" | "income",   // "withdrawal" hvis det er en hæveautomat-/ATM-kvittering
-  "merchant": string | null,                       // sted/forretning
+  "merchant": string | null,                       // sted/forretning. Er navnet skåret af/ulæseligt: brug det bedste du har, fx "Restaurant, Koh Yao" ud fra adressen
   "description": string | null,                    // kort dansk beskrivelse af hvad det dækker, fx "Aftensmad, 5 retter + drikke"
   "date": "YYYY-MM-DD" | null,
   "currency": "ISO-4217" | null,                   // fx THB, DKK, EUR
   "total": number | null,                          // det endelige beløb der blev BETALT, inkl. drikkepenge
   "tip": number | null,                            // drikkepenge/tip — ofte HÅNDSKREVET på kortkvitteringen. Ikke service charge.
-  "service_charge": number | null,
+  "service_charge": number | null,                 // trykt service charge / service fee (fx 10 %). Er IKKE tip — tip er det kunden selv giver
   "fee": number | null,                            // ATM-/bankgebyr på hævninger
-  "method": "card" | "cash" | null,                // kort hvis der er en kortkvittering/kortnummer, ellers null
+  "method": "card" | "cash" | "room" | null,       // KUN ud fra tydelige tegn: "room" hvis værelsesnr./underskrift faktisk er UDFYLDT eller der står "charge to room"; "card" ved kortkvittering/kortnummer; "cash" hvis der står kontant/change. Tomme fortrykte felter (Room No ...., Signature ....) betyder IKKE room. I tvivl: null
   "note": string | null                            // kort note hvis noget er usikkert eller ulæseligt
 }
 Regler: Hvis der er en håndskrevet tip og et håndskrevet total, så brug det håndskrevne total. Hvis kun tip er håndskrevet, så total = trykt beløb + tip.
@@ -76,12 +76,14 @@ async function readOne(entryId: number) {
   const upd: Record<string, any> = {}
   if (fresh.amount == null && total != null) upd.amount = total
   if (!fresh.tip && num(json.tip)) upd.tip = num(json.tip)
+  if (!fresh.service && num(json.service_charge)) upd.service = num(json.service_charge)
   if (!fresh.merchant && json.merchant) upd.merchant = String(json.merchant).slice(0, 200)
   if (!fresh.description && json.description) upd.description = String(json.description).slice(0, 500)
   if (json.currency && /^[A-Z]{3}$/.test(json.currency) && fresh.amount == null) upd.currency = json.currency
   if (json.date && /^\d{4}-\d{2}-\d{2}$/.test(json.date) && fresh.amount == null) upd.occurred_at = json.date
+  if (['card', 'cash', 'room'].includes(json.method) && fresh.amount == null && fresh.kind === 'expense') upd.method = json.method
   if (json.kind === 'withdrawal' && fresh.kind === 'expense' && fresh.amount == null) { upd.kind = 'withdrawal'; upd.method = 'cash' }
-  const notes = [json.note, num(json.service_charge) ? `Service charge: ${json.service_charge}` : null, num(json.fee) ? `Gebyr: ${json.fee}` : null].filter(Boolean)
+  const notes = [json.note, num(json.fee) ? `Gebyr: ${json.fee}` : null].filter(Boolean)
   upd.ai_note = notes.length ? notes.join(' · ').slice(0, 500) : null
   upd.status = 'ready'
   const keys = Object.keys(upd)

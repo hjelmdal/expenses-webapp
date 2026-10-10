@@ -25,6 +25,9 @@ export function shareFractions(split: Split | null): Record<number, number> {
 
 const round2 = (n: number) => Math.round(n * 100) / 100
 
+// Er posten (ved afregning) betalt med kontanter? Så bruges kontantkursen.
+export const paidInCash = (e: any) => e.method === 'cash' || (e.method === 'room' && e.settled_method === 'cash')
+
 export async function loadLedger(projectId: number) {
   const db = useDb()
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as any
@@ -52,7 +55,7 @@ export async function loadLedger(projectId: number) {
     let rate: number | null = null
     let rateSource = 'market'
     if (e.base_amount != null && e.amount) { rate = e.base_amount / e.amount; rateSource = 'fixed' }
-    else if (e.method === 'cash' && cashRate[e.currency]) { rate = cashRate[e.currency]; rateSource = 'cash' }
+    else if (paidInCash(e) && cashRate[e.currency]) { rate = cashRate[e.currency]; rateSource = 'cash' }
     else rate = await marketRate(e.currency, base, e.occurred_at)
     const amount = Number(e.amount) || 0
     const split = parseSplit(e.split)
@@ -63,6 +66,7 @@ export async function loadLedger(projectId: number) {
       rate_source: rateSource,
       base_value: rate != null ? round2(amount * rate) : null,
       base_tip: rate != null ? round2((Number(e.tip) || 0) * rate) : null,
+      base_service: rate != null ? round2((Number(e.service) || 0) * rate) : null,
       attachments: atts.filter(a => a.entry_id === e.id).map(a => a.id),
     })
   }
@@ -70,19 +74,34 @@ export async function loadLedger(projectId: number) {
   // Overblik
   const per: Record<number, { share: number, paid: number }> = {}
   for (const p of participants) per[p.id] = { share: 0, paid: 0 }
-  let spent = 0, income = 0, tips = 0, unsplit = 0, unconverted = 0, reading = 0
+  let spent = 0, income = 0, tips = 0, service = 0, unsplit = 0, unconverted = 0, reading = 0
   const byCurrency: Record<string, number> = {}
-  const cash: Record<string, number> = {}
+  // Kontanter pr. valuta: hævet − brugt. "Brugt" er kontantposter, kontant-tip på
+  // kort/regning, og hotelregninger der er betalt kontant.
+  const cashIn: Record<string, number> = {}
+  const cashOut: Record<string, number> = {}
+  const tab: Record<string, { amount: number, count: number }> = {}
+  const addTo = (o: Record<string, number>, c: string, v: number) => { o[c] = (o[c] || 0) + v }
   for (const e of entries) {
     if (e.status === 'reading') reading++
     const amt = Number(e.amount) || 0
-    if (e.kind === 'withdrawal') { cash[e.currency] = (cash[e.currency] || 0) + amt; continue }
-    if (e.method === 'cash') cash[e.currency] = (cash[e.currency] || 0) + (e.kind === 'income' ? amt : -amt)
+    const cashTip = e.method !== 'cash' && e.tip_cash ? Number(e.tip) || 0 : 0
+    if (e.kind === 'withdrawal') { addTo(cashIn, e.currency, amt); continue }
+    if (e.kind === 'income') { if (e.method === 'cash') addTo(cashIn, e.currency, amt) }
+    else if (e.method === 'cash') addTo(cashOut, e.currency, amt)
+    else {
+      if (cashTip) addTo(cashOut, e.currency, cashTip)
+      if (e.method === 'room') {
+        if (!e.settled_at) { tab[e.currency] ||= { amount: 0, count: 0 }; tab[e.currency].amount += amt - cashTip; tab[e.currency].count++ }
+        else if (e.settled_method === 'cash') addTo(cashOut, e.currency, amt - cashTip)
+      }
+    }
     if (e.kind === 'income') { income += e.base_value || 0; continue }
     byCurrency[e.currency] = (byCurrency[e.currency] || 0) + amt
     if (e.base_value == null) { if (amt) unconverted++; continue }
     spent += e.base_value
     tips += e.base_tip || 0
+    service += e.base_service || 0
     if (e.paid_by && per[e.paid_by]) per[e.paid_by].paid += e.base_value
     const fr = shareFractions(e.split)
     if (!Object.keys(fr).length) { unsplit += e.base_value; continue }
@@ -92,8 +111,10 @@ export async function loadLedger(projectId: number) {
   return {
     project, participants, members, entries,
     summary: {
-      base, spent: round2(spent), income: round2(income), tips: round2(tips), unsplit: round2(unsplit),
-      unconverted, reading, byCurrency, cash, cashRate,
+      base, spent: round2(spent), income: round2(income), tips: round2(tips), service: round2(service), unsplit: round2(unsplit),
+      unconverted, reading, byCurrency, cashRate, tab,
+      cash: Object.fromEntries([...new Set([...Object.keys(cashIn), ...Object.keys(cashOut)])].map(c => [c, round2((cashIn[c] || 0) - (cashOut[c] || 0))])),
+      cashIn, cashOut,
       perParticipant: participants.map(p => ({
         id: p.id, name: p.name, share: round2(per[p.id].share), paid: round2(per[p.id].paid),
         balance: round2(per[p.id].paid - per[p.id].share),

@@ -31,7 +31,20 @@ og aflæsningen udfylder kun tomme felter. Hænger der poster i `reading` ved ge
   `*-app`-wildcard-policyen (den gater også HomeApp og journal).
 - `public/brand/` er offentligt (Access-bypass) — kun ikoner/manifest der.
 
+## Test uden at vælte dev
+Start ALDRIG en ekstra `nuxt dev` i mappen, og dræb ikke manager'ens dev-server (3213). Den deler
+`.nuxt` og dev-låsen, så dev går ned, og dev-PWA'en på telefonen genindlæser igen og igen. Brug en
+isoleret testserver med egen build-mappe, egne data og egen port:
+
+```bash
+EXPENSES_BUILD_DIR=.nuxt-test EXPENSES_DATA_DIR=<scratch>/testdata NUXT_DEV_USER=test@example.com \
+  NUXT_IGNORE_LOCK=1 node node_modules/nuxt/bin/nuxt.mjs dev --host 127.0.0.1 --port 3299
+```
+Ryd `.nuxt-test` op bagefter. Testdata hører aldrig hjemme i `data/dev` (SHN bruger dev).
+
 ## Deploy
-Prod kører det byggede `.output`: `pnpm build` og så
-`sudo -n /bin/launchctl kickstart -k system/com.hjelmdal.manager` (eller genstart prod fra portalen).
+Prod kører det byggede `.output`. `pnpm build` bygger i `.nuxt-build`, så det ikke støder ind i
+dev-serverens `.nuxt`/lås (et build i `.nuxt` fejler, mens dev kører — og at stoppe dev for at bygge
+fik dev-PWA'en til at genindlæse). Genstart så KUN prod-processen; manageren starter den igen efter 2 s:
+`kill $(lsof -nP -iTCP:4013 -sTCP:LISTEN -t)`. Undgå `kickstart` af manageren — den tager dev med ned.
 Pakker: `minimumReleaseAge: 4320` i `pnpm-workspace.yaml` (≥ 3 dage gamle).

@@ -17,7 +17,7 @@ function load() {
   if (!e) return
   Object.assign(f, {
     kind: e.kind, occurred_at: e.occurred_at, merchant: e.merchant || '', description: e.description || '',
-    amount: e.amount ?? '', tip: e.tip || '', currency: e.currency, method: e.method,
+    amount: e.amount ?? '', tip: e.tip || '', service: e.service || '', tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
     paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '',
   })
   splitMode.value = e.split?.mode || 'none'
@@ -92,6 +92,11 @@ async function reread(reset: boolean) {
 }
 const viewing = ref<number | null>(null)
 const e = computed(() => data.value?.entry)
+async function reopen() {
+  if (!confirm('Sæt posten tilbage på den åbne hotelregning?')) return
+  await api(`/entries/${eid}`, { method: 'PATCH', body: { settled: false } })
+  await refresh()
+}
 const rateText = computed(() => {
   if (!e.value?.rate || e.value.currency === base.value) return ''
   const src = { market: 'markedskurs', cash: 'kontantkurs fra hævninger', fixed: 'fast kurs' }[e.value.rate_source as string]
@@ -144,11 +149,7 @@ const rateText = computed(() => {
       </div>
       <p v-if="rateText" class="-mt-3 text-xs text-muted">≈ {{ money(e.base_value, base) }} · {{ rateText }}</p>
 
-      <div v-if="f.kind === 'expense'" class="grid grid-cols-2 gap-2">
-        <UFormField label="Heraf drikkepenge"><UInput v-model="f.tip" inputmode="decimal" class="w-full" /></UFormField>
-        <UFormField label="Dato"><UInput v-model="f.occurred_at" type="date" class="w-full" /></UFormField>
-      </div>
-      <UFormField v-else label="Dato"><UInput v-model="f.occurred_at" type="date" class="w-full" /></UFormField>
+      <UFormField label="Dato"><UInput v-model="f.occurred_at" type="date" class="w-full" /></UFormField>
 
       <UFormField v-if="f.kind === 'withdrawal'" :label="`Trukket på kontoen (${base})`" help="Det banken trak inkl. gebyrer — bruges som kurs for alle kontantudgifter i denne valuta">
         <UInput v-model="f.base_amount" inputmode="decimal" class="w-full" />
@@ -157,9 +158,19 @@ const rateText = computed(() => {
       <UFormField label="Sted"><UInput v-model="f.merchant" class="w-full" /></UFormField>
       <UFormField label="Beskrivelse"><UTextarea v-model="f.description" :rows="2" autoresize class="w-full" /></UFormField>
 
-      <div v-if="f.kind !== 'withdrawal'" class="flex gap-2">
-        <UButton :variant="f.method === 'card' ? 'solid' : 'soft'" color="neutral" icon="i-lucide-credit-card" label="Kort" @click="f.method = 'card'" />
-        <UButton :variant="f.method === 'cash' ? 'solid' : 'soft'" color="neutral" icon="i-lucide-banknote" label="Kontant" @click="f.method = 'cash'" />
+      <UFormField v-if="f.kind !== 'withdrawal'" label="Betalt med">
+        <MethodPicker v-model="f.method" :room="f.kind === 'expense'" />
+      </UFormField>
+      <div v-if="f.kind === 'expense' && f.method === 'room' && e.method === 'room'" class="-mt-2 flex items-center justify-between rounded-lg bg-elevated px-3 py-2 text-sm">
+        <span v-if="e.settled_at">Regningen betalt {{ e.settled_at }} ({{ e.settled_method === 'cash' ? 'kontant' : 'kort' }})</span>
+        <span v-else class="text-muted">På den åbne hotelregning</span>
+        <UButton v-if="e.settled_at" size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
+      </div>
+      <div v-if="f.kind === 'expense'" class="grid grid-cols-2 gap-2">
+        <TipInput v-model:tip="f.tip" v-model:tip-cash="f.tip_cash" :method="f.method" />
+        <UFormField label="Heraf service charge" help="Fast tillæg på regningen">
+          <UInput v-model="f.service" inputmode="decimal" class="w-full" placeholder="0" />
+        </UFormField>
       </div>
 
       <template v-if="f.kind === 'expense' && people.length">

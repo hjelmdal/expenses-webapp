@@ -7,6 +7,9 @@ export default defineNuxtConfig({
   modules: ['@nuxt/ui'],
   css: ['~/assets/css/main.css'],
   ssr: false,
+  // Egen build-mappe til testserveren, så den ikke deler .nuxt (og dev-låsen)
+  // med manager'ens dev-server og vælter den — det fik dev-PWA'en til at genindlæse.
+  buildDir: process.env.EXPENSES_BUILD_DIR || '.nuxt',
   devtools: { enabled: false },
   app: {
     head: {
@@ -14,7 +17,8 @@ export default defineNuxtConfig({
       htmlAttrs: { lang: 'da' },
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
-        { name: 'theme-color', content: '#0f766e' },
+        { name: 'theme-color', content: '#ffffff', media: '(prefers-color-scheme: light)' },
+        { name: 'theme-color', content: '#18181b', media: '(prefers-color-scheme: dark)' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'apple-mobile-web-app-title', content: 'Udlæg' },
       ],
@@ -31,7 +35,8 @@ export default defineNuxtConfig({
   runtimeConfig: {
     // Data-mappen (db + kvitteringer), relativ til appens rod. Dev og prod har
     // hver sin, så afprøvning i dev aldrig rører rigtige udlæg.
-    dataDir: isDev ? './data/dev' : './data/prod',
+    // EXPENSES_DATA_DIR: kun til Claudes isolerede testserver (se CLAUDE.md).
+    dataDir: process.env.EXPENSES_DATA_DIR || (isDev ? './data/dev' : './data/prod'),
     // Cloudflare Access-teamet, hvis JWT verificeres (identitet).
     accessTeam: 'hjelmdal',
     // Kun lokal dev uden Access foran: falder tilbage til denne bruger.
