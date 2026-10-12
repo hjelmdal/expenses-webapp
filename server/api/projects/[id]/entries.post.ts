@@ -13,6 +13,7 @@ export default defineEventHandler(async (event) => {
     kind: 'expense', method: 'card', currency: project.currency,
     occurred_at: new Date().toISOString().slice(0, 10), ...u,
   }
+  if (isSpend(row.kind) && !('split' in body)) (row as any).split = defaultSplit(project)
   const db = useDb()
   const keys = Object.keys(row)
   const r = db.prepare(`INSERT INTO entries (project_id, created_by, ${keys.join(', ')}) VALUES (?, ?, ${keys.map(() => '?').join(', ')})`)
@@ -21,6 +22,6 @@ export default defineEventHandler(async (event) => {
   if (hasImages) {
     try { saveImages(id, entryId, parts!) } catch (e) { db.prepare('DELETE FROM entries WHERE id = ?').run(entryId); throw e }
     queueReceipt(entryId)
-  } else if (row.kind === 'expense' && !(row as any).category) queueCategorize(entryId)
+  } else if (isSpend(row.kind) && !(row as any).category) queueCategorize(entryId)
   return { id: entryId }
 })

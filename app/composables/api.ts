@@ -34,7 +34,7 @@ export function dayLabel(iso: string) {
   return d.toLocaleDateString('da-DK', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
-export const KIND_LABEL: Record<string, string> = { expense: 'Udgift', income: 'Indtægt', withdrawal: 'Hævning', deposit: 'Depositum' }
+export const KIND_LABEL: Record<string, string> = { expense: 'Udgift', credit: 'Rabat', income: 'Indtægt', withdrawal: 'Hævning', deposit: 'Depositum' }
 
 // Skalerer et foto ned til maks 2000 px JPEG før upload — kvitteringer kan
 // stadig læses, og det går hurtigt på hotel-wifi. Kan billedet ikke dekodes

@@ -15,9 +15,10 @@ export default defineEventHandler(async (event) => {
   const charged = numOrNull(b.base_amount)
   const db = useDb()
   const open = db.prepare(`SELECT * FROM entries WHERE project_id = ? AND method = 'room' AND settled_at IS NULL
-    AND kind = 'expense' AND currency = ?`).all(id, currency) as any[]
+    AND kind IN ('expense', 'credit') AND currency = ?`).all(id, currency) as any[]
   if (!open.length) throw createError({ statusCode: 400, statusMessage: 'Ingen åben regning' })
-  const onTab = (e: any) => (Number(e.amount) || 0) - (e.tip_cash ? Number(e.tip) || 0 : 0)
+  // Rabatter/credits på regningen trækker fra.
+  const onTab = (e: any) => spendSign(e.kind) * ((Number(e.amount) || 0) - (e.tip_cash ? Number(e.tip) || 0 : 0))
   const total = Math.round(open.reduce((s, e) => s + onTab(e), 0) * 100) / 100
 
   let left = total, applied = 0, refunded = 0
@@ -41,6 +42,6 @@ export default defineEventHandler(async (event) => {
   const rate = charged && remainder > 0 ? charged / remainder : null
   const upd = db.prepare(`UPDATE entries SET settled_at = ?, settled_method = ?, paid_by = coalesce(?, paid_by),
     base_amount = coalesce(?, base_amount), updated_at = datetime('now') WHERE id = ?`)
-  for (const e of open) upd.run(date, remainder > 0 ? method : 'deposit', payer, rate != null ? Math.round((Number(e.amount) || 0) * rate * 100) / 100 : null, e.id)
+  for (const e of open) upd.run(date, remainder > 0 || !applied ? method : 'deposit', payer, rate != null ? Math.round((Number(e.amount) || 0) * rate * 100) / 100 : null, e.id)
   return { settled: open.length, total, applied, refunded, remainder }
 })

@@ -16,6 +16,7 @@ onBeforeUnmount(() => clearInterval(timer))
 
 // --- Quick actions (swipe til venstre på en post). Sletning venter et øjeblik,
 // så "Fortryd" kan nå at stoppe den — i stedet for en bekræftelsesdialog.
+const NuxtLink = resolveComponent('NuxtLink')
 const ROW_ACTIONS = [{ key: 'delete', icon: 'i-lucide-trash-2', label: 'Slet', color: 'error' as const }]
 const hidden = ref(new Set<number>())
 // Tryk på en kategori i fordelingen filtrerer listen.
@@ -50,14 +51,57 @@ function rowAction(key: string, e: any) {
 
 const days = computed(() => {
   const g: { day: string, items: any[], total: number }[] = []
-  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id) && (!catFilter.value || (x.kind === 'expense' && (x.category || 'none') === catFilter.value)))) {
+  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id) && (!catFilter.value || (isSpend(x.kind) && (x.category || 'none') === catFilter.value)))) {
     let d = g.find(x => x.day === e.occurred_at)
     if (!d) g.push(d = { day: e.occurred_at, items: [], total: 0 })
     d.items.push(e)
-    if (e.kind === 'expense') d.total += e.base_value || 0
+    if (isSpend(e.kind)) d.total += spendSign(e.kind) * (e.base_value || 0)
   }
   return g
 })
+
+// --- Massefordeling: vælg flere udgifter (eller alle viste) og giv dem samme fordeling.
+const selecting = ref(false)
+const selected = ref(new Set<number>())
+const visibleExpenses = computed(() => days.value.flatMap(d => d.items).filter((e: any) => isSpend(e.kind)))
+function select(preset: 'all' | 'unsplit' | 'none') {
+  const list = preset === 'all' ? visibleExpenses.value : preset === 'unsplit' ? visibleExpenses.value.filter((e: any) => !e.split) : []
+  selected.value = new Set(list.map((e: any) => e.id))
+}
+function startSelect(preset: 'all' | 'unsplit' | 'none' = 'none') { selecting.value = true; select(preset) }
+function stopSelect() { selecting.value = false; selected.value = new Set() }
+function toggleSel(e: any) {
+  if (!isSpend(e.kind)) return
+  const s = new Set(selected.value)
+  s.has(e.id) ? s.delete(e.id) : s.add(e.id)
+  selected.value = s
+}
+// Fra indstillinger: /p/:id?select=unsplit åbner direkte i vælge-tilstand.
+onMounted(() => {
+  if (!route.query.select) return
+  startSelect(route.query.select === 'all' ? 'all' : 'unsplit')
+  navigateTo({ query: {} }, { replace: true })
+})
+const bulkOpen = ref(false)
+const bulkSplit = ref<any>(null)
+// Forslag i dialogen = turens standard (eller ligeligt mellem alle, hvis der ingen er).
+function defaultSplit() {
+  const ps = people.value
+  if (p.value?.default_split === 'weights') return { mode: 'weights', shares: Object.fromEntries(ps.filter(x => x.weight > 0).map(x => [x.id, x.weight])) }
+  return { mode: 'equal', pids: ps.map(x => x.id) }
+}
+function openBulk() { bulkSplit.value = defaultSplit(); bulkOpen.value = true }
+const savingBulk = ref(false)
+async function saveBulk() {
+  savingBulk.value = true
+  try {
+    const r = await api<{ updated: number }>(`/projects/${id}/split`, { method: 'POST', body: { ids: [...selected.value], split: bulkSplit.value } })
+    toast.add({ title: `${r.updated} post${r.updated === 1 ? '' : 'er'} ${bulkSplit.value ? 'fordelt' : 'sat til “senere”'}`, color: 'success' })
+    bulkOpen.value = false
+    stopSelect()
+    await refresh()
+  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { savingBulk.value = false }
+}
 
 // --- Foto: ét tryk = ny post, gemt med det samme og aflæst i baggrunden.
 const camera = ref<HTMLInputElement>()
@@ -183,11 +227,11 @@ async function count() {
 
 // --- Hurtig indtastning
 const quick = ref(false)
-const q = reactive({ kind: 'expense', amount: '', currency: '', description: '', method: 'card', base_amount: '', occurred_at: '', tip: '', tip_cash: false, paid_now: '', paid_method: 'card' })
+const q = reactive({ kind: 'expense', amount: '', currency: '', description: '', method: 'card', base_amount: '', occurred_at: '', tip: '', tip_cash: false, all_tip: false, paid_now: '', paid_method: 'card' })
 const today = () => localDate()
 const yesterday = () => localDate(new Date(Date.now() - 864e5))
 function openQuick(kind = 'expense') {
-  Object.assign(q, { kind, amount: '', currency: p.value.currency, description: '', method: kind === 'withdrawal' ? 'cash' : defMethod.value, base_amount: '', tip: '', tip_cash: false, paid_now: '', paid_method: 'card',
+  Object.assign(q, { kind, amount: '', currency: p.value.currency, description: '', method: kind === 'withdrawal' ? 'cash' : defMethod.value, base_amount: '', tip: '', tip_cash: false, all_tip: false, paid_now: '', paid_method: 'card',
     // Datoen huskes mellem poster i samme session — taster man gårsdagen ind, er det typisk flere.
     occurred_at: q.occurred_at || today() })
   quick.value = true
@@ -196,7 +240,7 @@ const savingQuick = ref(false)
 async function saveQuick() {
   savingQuick.value = true
   try {
-    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, paid_by: q.kind === 'withdrawal' ? null : payer.value } })
+    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, tip: q.kind === 'expense' && q.all_tip ? q.amount : q.tip, paid_by: q.kind === 'withdrawal' ? null : payer.value } })
     if (q.kind === 'expense' && q.method === 'later' && Number(String(q.paid_now).replace(',', '.')) > 0) {
       await api(`/entries/${r.id}/payments`, { method: 'POST', body: { amount: q.paid_now, method: q.paid_method, paid_by: payer.value, date: q.occurred_at } })
     }
@@ -211,14 +255,15 @@ function flow(e: any) {
   if (e.kind === 'income') return { sign: '+', text: 'text-success' }
   if (e.kind === 'withdrawal') return { sign: '+', text: 'text-info' }
   if (e.kind === 'deposit') return { sign: '', text: 'text-warning' }
+  if (e.kind === 'credit') return { sign: '+', text: 'text-success' }
   return { sign: '−', text: 'text-error' }
 }
 function rowTitle(e: any) {
-  return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.status === 'reading' ? 'Aflæser kvittering…' : 'Udgift')
+  return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.status === 'reading' ? 'Aflæser kvittering…' : KIND_LABEL[e.kind] || 'Udgift')
 }
-const rowIcon = (e: any) => categoryOf(e.category)?.icon || (e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right')
+const rowIcon = (e: any) => categoryOf(e.category)?.icon || (e.kind === 'credit' ? 'i-lucide-badge-percent' : e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right')
 const rowMeta = (e: any) => [
-  e.kind === 'expense' ? categoryOf(e.category)?.label || '' : '',
+  isSpend(e.kind) ? categoryOf(e.category)?.label || '' : '',
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
   e.method === 'room' ? (e.settled_at ? 'regning betalt' : 'på regning') : '',
@@ -228,7 +273,7 @@ const rowMeta = (e: any) => [
   splitShort(e),
 ].filter(Boolean).join(' · ')
 const splitShort = (e: any) => {
-  if (e.kind !== 'expense') return ''
+  if (!isSpend(e.kind)) return ''
   if (!e.split) return 'ikke fordelt'
   const ids = e.split.mode === 'equal' ? e.split.pids : Object.keys(e.split.shares)
   return `${ids.length} deler`
@@ -241,6 +286,7 @@ const splitShort = (e: any) => {
       <div class="flex items-center gap-2">
         <UButton to="/" icon="i-lucide-chevron-left" variant="ghost" color="neutral" square />
         <h1 class="flex-1 truncate text-lg font-semibold">{{ p.name }}</h1>
+        <UButton v-if="!selecting" icon="i-lucide-list-checks" variant="ghost" color="neutral" square aria-label="Vælg poster" @click="startSelect()" />
         <UButton :to="`/p/${id}/settings`" icon="i-lucide-settings" variant="ghost" color="neutral" square />
       </div>
     </header>
@@ -285,10 +331,11 @@ const splitShort = (e: any) => {
           <div class="font-medium tabular-nums">{{ money(s.service, base) }}</div>
           <div class="text-xs text-muted">stedets valg</div>
         </div>
-        <div class="rounded-xl border border-default p-3">
+        <button type="button" class="rounded-xl border border-default p-3 text-left" :disabled="!s.unsplit" @click="startSelect('unsplit')">
           <div class="text-muted">Ikke fordelt</div>
           <div class="font-medium tabular-nums">{{ money(s.unsplit, base) }}</div>
-        </div>
+          <div v-if="s.unsplit" class="text-xs text-primary">Fordel nu</div>
+        </button>
         <div v-if="s.income" class="rounded-xl border border-default p-3">
           <div class="text-muted">Indtægter</div>
           <div class="font-medium tabular-nums">{{ money(s.income, base) }}</div>
@@ -340,7 +387,8 @@ const splitShort = (e: any) => {
             <span class="flex min-w-0 items-center gap-1.5"><UIcon :name="r.icon" class="size-4 shrink-0 text-muted" /><span class="truncate">{{ r.label }}</span></span>
             <span class="shrink-0 tabular-nums">{{ money(r.value, base) }} <span class="text-muted">· {{ r.pct }} %</span></span>
           </div>
-          <div class="mt-1 h-1.5 rounded-full bg-elevated">
+          <!-- Kun rabatter i kategorien (netto negativ): ingen bjælke -->
+          <div v-if="r.value > 0" class="mt-1 h-1.5 rounded-full bg-elevated">
             <div class="h-full rounded-full bg-primary" :style="{ width: `${Math.max(r.w, 2)}%` }" />
           </div>
         </button>
@@ -378,6 +426,12 @@ const splitShort = (e: any) => {
         <span>Viser: <b>{{ categoryOf(catFilter)?.label || 'Ikke kategoriseret' }}</b></span>
         <UButton size="xs" variant="ghost" color="neutral" icon="i-lucide-x" label="Vis alle" @click="catFilter = null" />
       </div>
+      <div v-if="selecting" class="mb-3 flex items-center gap-1 rounded-lg bg-elevated px-2 py-1.5 text-sm">
+        <span class="px-1 text-muted">Vælg:</span>
+        <UButton size="xs" variant="soft" color="neutral" label="Alle" @click="select('all')" />
+        <UButton size="xs" variant="soft" color="neutral" label="Ikke fordelte" @click="select('unsplit')" />
+        <UButton size="xs" variant="ghost" color="neutral" label="Ingen" @click="select('none')" />
+      </div>
       <div v-if="!days.length" class="rounded-xl border border-dashed border-default p-8 text-center text-muted">
         Tag et billede af første kvittering, eller indtast et beløb.
       </div>
@@ -386,8 +440,12 @@ const splitShort = (e: any) => {
           <span>{{ dayLabel(d.day) }}</span><span class="tabular-nums">{{ money(d.total, base) }}</span>
         </div>
         <div class="divide-y divide-default overflow-hidden rounded-xl border border-default">
-          <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" @action="k => rowAction(k, e)">
-          <NuxtLink :to="`/p/${id}/e/${e.id}`" draggable="false" class="flex select-none items-center gap-3 p-3 active:bg-elevated">
+          <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" :disabled="selecting" @action="k => rowAction(k, e)">
+          <component :is="selecting ? 'button' : NuxtLink" v-bind="selecting ? { type: 'button', onClick: () => toggleSel(e) } : { to: `/p/${id}/e/${e.id}` }"
+            draggable="false" class="flex w-full select-none items-center gap-3 p-3 text-left active:bg-elevated"
+            :class="selecting && !isSpend(e.kind) ? 'opacity-40' : ''">
+            <UIcon v-if="selecting" :name="selected.has(e.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'" class="size-6 shrink-0"
+              :class="selected.has(e.id) ? 'text-primary' : 'text-dimmed'" />
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
               <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
@@ -404,7 +462,7 @@ const splitShort = (e: any) => {
               <div class="font-medium" :class="flow(e).text">{{ e.amount != null ? flow(e).sign + money(e.amount, e.currency) : '—' }}</div>
               <div v-if="e.currency !== base && e.base_value != null" class="text-xs text-muted">{{ money(e.base_value, base) }}</div>
             </div>
-          </NuxtLink>
+          </component>
           </SwipeRow>
         </div>
       </div>
@@ -489,6 +547,16 @@ const splitShort = (e: any) => {
       </template>
     </UModal>
 
+    <UModal v-model:open="bulkOpen" :title="`Fordel ${selected.size} post${selected.size === 1 ? '' : 'er'}`">
+      <template #body>
+        <form class="space-y-4" @submit.prevent="saveBulk">
+          <SplitEditor v-model="bulkSplit" :people="people" />
+          <p class="text-xs text-muted">Erstatter fordelingen på de valgte poster.</p>
+          <UButton type="submit" block size="lg" :loading="savingBulk" label="Gem fordeling" />
+        </form>
+      </template>
+    </UModal>
+
     <!-- Inputbar -->
     <UModal v-model:open="pickPayer" title="Nye poster">
       <template #body>
@@ -511,7 +579,14 @@ const splitShort = (e: any) => {
     </UModal>
     <input ref="camera" type="file" accept="image/*" capture="environment" class="hidden" @change="onFiles">
     <input ref="library" type="file" accept="image/*" multiple class="hidden" @change="onFiles">
-    <div class="fixed inset-x-0 bottom-0 z-20 border-t border-default bg-default/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+    <div v-if="selecting" class="fixed inset-x-0 bottom-0 z-20 border-t border-default bg-default/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
+      <div class="mx-auto flex max-w-xl gap-2">
+        <UButton size="xl" class="flex-1 justify-center" icon="i-lucide-users" :disabled="!selected.size"
+          :label="selected.size ? `Fordel ${selected.size} post${selected.size === 1 ? '' : 'er'}` : 'Vælg poster'" @click="openBulk" />
+        <UButton size="xl" color="neutral" variant="soft" label="Annullér" @click="stopSelect" />
+      </div>
+    </div>
+    <div v-else class="fixed inset-x-0 bottom-0 z-20 border-t border-default bg-default/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
       <button type="button" class="mx-auto mb-2 flex max-w-xl items-center gap-1 text-sm text-muted" @click="pickPayer = true">
         <template v-if="people.length">
           <UIcon name="i-lucide-user" class="size-4" />
@@ -534,18 +609,18 @@ const splitShort = (e: any) => {
     <UModal v-model:open="quick" title="Ny post">
       <template #body>
         <form class="space-y-4" @submit.prevent="saveQuick">
-          <KindTabs v-model="q.kind" @change="k => { if (k === 'withdrawal') q.method = 'cash'; else if (k !== 'expense' && ['room', 'later'].includes(q.method)) q.method = 'card' }" />
+          <KindTabs v-model="q.kind" @change="k => { if (k === 'withdrawal') q.method = 'cash'; else if (!isSpend(k) && ['room', 'later'].includes(q.method) || k === 'credit' && q.method === 'later') q.method = 'card' }" />
           <div class="flex gap-2">
             <UInput v-model="q.amount" inputmode="decimal" placeholder="0" size="xl" class="flex-1" autofocus
               :ui="{ base: 'text-2xl tabular-nums' }" />
-            <UInput v-model="q.currency" size="xl" class="w-24 uppercase" maxlength="3" />
+            <CurrencyPicker v-model="q.currency" :options="[p.currency, base]" />
           </div>
           <UFormField v-if="q.kind === 'withdrawal'" :label="`Trukket på kontoen (${base})`" help="Det banken trak — giver den reelle kontantkurs inkl. gebyrer">
             <UInput v-model="q.base_amount" inputmode="decimal" class="w-full" />
           </UFormField>
           <UInput v-model="q.description" placeholder="Hvad var det? (valgfrit)" class="w-full" />
           <div v-if="q.kind !== 'withdrawal' && people.length">
-            <div class="mb-1 text-xs text-muted">{{ q.kind === 'income' ? 'Modtaget af' : 'Lagt ud af' }}</div>
+            <div class="mb-1 text-xs text-muted">{{ q.kind === 'expense' ? 'Lagt ud af' : 'Modtaget af' }}</div>
             <div class="flex flex-wrap gap-1.5">
               <UButton v-for="x in people" :key="x.id" type="button" size="sm" :variant="payer === x.id ? 'solid' : 'soft'" color="neutral"
                 :label="x.name" @click="payer = payer === x.id ? null : x.id" />
@@ -556,7 +631,8 @@ const splitShort = (e: any) => {
             <UButton type="button" size="sm" :variant="q.occurred_at === yesterday() ? 'solid' : 'soft'" color="neutral" label="I går" @click="q.occurred_at = yesterday()" />
             <UInput v-model="q.occurred_at" type="date" size="sm" class="flex-1" />
           </div>
-          <MethodPicker v-if="q.kind !== 'withdrawal'" v-model="q.method" :room="q.kind === 'expense'" :later="q.kind === 'expense'" />
+          <MethodPicker v-if="q.kind !== 'withdrawal'" v-model="q.method" :room="isSpend(q.kind)" :later="q.kind === 'expense'" />
+          <p v-if="q.kind === 'credit'" class="-mt-2 text-xs text-muted">Trækkes fra forbruget og fordeles som en udgift. Vælg “Regning”, hvis den er krediteret på hotelregningen.</p>
           <p v-if="q.kind === 'deposit'" class="-mt-2 text-xs text-muted">Tæller ikke som forbrug. Kort = reservation; kontant trækkes fra pungen, indtil det kommer retur.</p>
           <div v-if="q.kind === 'expense' && q.method === 'later'" class="rounded-lg bg-elevated p-3">
             <div class="mb-2 text-xs text-muted">Hele beløbet tæller som forbrug nu. Resten vises under “Mangler at betale”.</div>
@@ -565,7 +641,11 @@ const splitShort = (e: any) => {
               <MethodPicker v-model="q.paid_method" :room="false" size="sm" />
             </div>
           </div>
-          <TipInput v-if="q.kind === 'expense'" v-model:tip="q.tip" v-model:tip-cash="q.tip_cash" :method="q.method" />
+          <label v-if="q.kind === 'expense'" class="flex items-center gap-2 text-sm">
+            <USwitch v-model="q.all_tip" />
+            Det hele er drikkepenge
+          </label>
+          <TipInput v-if="q.kind === 'expense' && !q.all_tip" v-model:tip="q.tip" v-model:tip-cash="q.tip_cash" :method="q.method" />
           <UButton type="submit" block size="lg" :loading="savingQuick" :disabled="!q.amount" label="Gem" />
         </form>
       </template>

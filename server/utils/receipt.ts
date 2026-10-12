@@ -39,12 +39,12 @@ ${files.map(f => '- ' + f).join('\n')}
 Billederne hører til ÉN post (fx regning + kortkvittering, eller flere sider af samme regning).
 Svar KUN med ét JSON-objekt, ingen anden tekst:
 {
-  "kind": "expense" | "withdrawal" | "income" | "deposit",   // "withdrawal" ved ATM-kvittering; "deposit" ved depositum/security deposit/pre-authorization der skal komme retur
+  "kind": "expense" | "credit" | "withdrawal" | "income" | "deposit",   // "withdrawal" ved ATM-kvittering; "deposit" ved depositum/security deposit/pre-authorization der skal komme retur; "credit" hvis HELE bilaget er en rabat/credit/kompensation/refusion, der trækkes fra (fx hotel-credit, afslag efter klage) — ikke en almindelig regning med en rabatlinje
   "merchant": string | null,                       // sted/forretning. Er navnet skåret af/ulæseligt: brug det bedste du har, fx "Restaurant, Koh Yao" ud fra adressen
   "description": string | null,                    // kort dansk beskrivelse af hvad det dækker, fx "Aftensmad, 5 retter + drikke"
   "date": "YYYY-MM-DD" | null,
   "currency": "ISO-4217" | null,                   // fx THB, DKK, EUR
-  "total": number | null,                          // det endelige beløb der blev BETALT, inkl. drikkepenge
+  "total": number | null,                          // det endelige beløb der blev BETALT, inkl. drikkepenge. Ved "credit": rabattens størrelse som positivt tal
   "tip": number | null,                            // drikkepenge/tip — ofte HÅNDSKREVET på kortkvitteringen. Ikke service charge.
   "service_charge": number | null,                 // trykt service charge / service fee (fx 10 %). Er IKKE tip — tip er det kunden selv giver
   "fee": number | null,                            // ATM-/bankgebyr på hævninger
@@ -85,6 +85,7 @@ async function readOne(entryId: number) {
   if (json.currency && /^[A-Z]{3}$/.test(json.currency) && fresh.amount == null) upd.currency = json.currency
   if (json.date && /^\d{4}-\d{2}-\d{2}$/.test(json.date) && fresh.amount == null) upd.occurred_at = json.date
   if (['card', 'cash', 'room'].includes(json.method) && fresh.amount == null && fresh.kind === 'expense') upd.method = json.method
+  if (json.kind === 'credit' && fresh.kind === 'expense' && fresh.amount == null) { upd.kind = 'credit'; upd.tip = 0; upd.service = 0; if (upd.amount != null) upd.amount = Math.abs(upd.amount) }
   if (json.kind === 'deposit' && fresh.kind === 'expense' && fresh.amount == null) { upd.kind = 'deposit'; upd.method = json.method === 'cash' ? 'cash' : 'card' }
   if (json.kind === 'withdrawal' && fresh.kind === 'expense' && fresh.amount == null) { upd.kind = 'withdrawal'; upd.method = 'cash' }
   const notes = [json.note, num(json.fee) ? `Gebyr: ${json.fee}` : null].filter(Boolean)

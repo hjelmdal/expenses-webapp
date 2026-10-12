@@ -49,7 +49,7 @@ function migrate(d: DatabaseSync) {
     CREATE TABLE IF NOT EXISTS entries (
       id INTEGER PRIMARY KEY,
       project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
-      kind TEXT NOT NULL DEFAULT 'expense',          -- expense | income | withdrawal | deposit
+      kind TEXT NOT NULL DEFAULT 'expense',          -- expense | credit | income | withdrawal | deposit
       occurred_at TEXT NOT NULL,                     -- YYYY-MM-DD
       merchant TEXT,
       description TEXT,
@@ -103,6 +103,9 @@ function migrate(d: DatabaseSync) {
   add('settled_at', 'TEXT')                        // regning: dato hvor hotelregningen blev betalt (NULL = åben)
   add('settled_method', 'TEXT')                    // regning: card | cash
   add('refunded', 'REAL NOT NULL DEFAULT 0')        // depositum: beløb der er kommet retur (fuldt ved "fået tilbage", rest ved modregning)
-  add('service', 'REAL NOT NULL DEFAULT 0')
-  add('category', 'TEXT')                          // se shared/utils/categories.ts; NULL = ikke kategoriseret endnu         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
+  add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
+  add('category', 'TEXT')                          // se shared/utils/categories.ts; NULL = ikke kategoriseret endnu
+  // Turens standardfordeling for nye udgifter: NULL (senere) | equal | weights (deltagernes vægte).
+  const pcols = new Set((d.prepare('PRAGMA table_info(projects)').all() as any[]).map(c => c.name))
+  if (!pcols.has('default_split')) d.exec('ALTER TABLE projects ADD COLUMN default_split TEXT')
 }

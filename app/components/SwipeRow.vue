@@ -3,7 +3,7 @@
 // handlingerne (ikoner) kommer frem bag det i højre side. Trækkes kortet helt
 // over, udløses den første handling direkte. Kun én række er åben ad gangen.
 export interface SwipeAction { key: string, icon: string, label: string, color?: 'error' | 'primary' | 'neutral' }
-const props = defineProps<{ actions: SwipeAction[] }>()
+const props = defineProps<{ actions: SwipeAction[], disabled?: boolean }>()
 const emit = defineEmits<{ action: [key: string] }>()
 
 const ACTION_W = 76
@@ -18,7 +18,7 @@ watch(openRow, v => { if (v !== id && !dragging.value) x.value = 0 })
 let startX = 0, startY = 0, base = 0, axis: 'x' | 'y' | null = null
 let suppressClick = false   // browseren sender et klik efter et træk — det skal ignoreres
 function down(e: PointerEvent) {
-  if (e.pointerType === 'mouse' && e.button !== 0) return
+  if (props.disabled || (e.pointerType === 'mouse' && e.button !== 0)) return
   startX = e.clientX; startY = e.clientY; base = x.value; axis = null
 }
 function move(e: PointerEvent) {
@@ -48,6 +48,7 @@ function up() {
 }
 // Et tryk på en åben række lukker den i stedet for at åbne posten.
 function click(e: MouseEvent) {
+  if (props.disabled) return
   if (suppressClick) { e.preventDefault(); e.stopPropagation(); suppressClick = false; return }
   if (x.value !== 0 && !(e.target as HTMLElement).closest('[data-swipe-action]')) {
     e.preventDefault(); e.stopPropagation(); x.value = 0; openRow.value = null
@@ -57,6 +58,7 @@ function fire(key: string) {
   emit('action', key)
   setTimeout(() => { x.value = 0; if (openRow.value === id) openRow.value = null }, 250)
 }
+watch(() => props.disabled, d => { if (d) x.value = 0 })
 const full = computed(() => (row.value?.offsetWidth || 360) * 0.55 < -x.value)
 </script>
 

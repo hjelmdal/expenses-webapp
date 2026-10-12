@@ -27,6 +27,9 @@ const addPerson = () => run(async () => {
   Object.assign(newPerson, { name: '', weight: '1' })
 })
 const updatePerson = (x: any) => run(() => api(`/participants/${x.id}`, { method: 'PATCH', body: { name: x.name, weight: x.weight } }))
+// Standardfordeling for nye udgifter. Ændres den, kan eksisterende poster opdateres i oversigten.
+const SPLIT_OPTS = [['none', 'Senere'], ['equal', 'Ligeligt'], ['weights', 'Andele']] as const
+const setDefaultSplit = (v: string) => run(() => api(`/projects/${id}`, { method: 'PATCH', body: { default_split: v } }))
 const delPerson = (x: any) => confirm(`Fjern ${x.name}? Fordelinger med personen mister den.`) && run(() => api(`/participants/${x.id}`, { method: 'DELETE' }))
 
 const newMember = ref('')
@@ -66,6 +69,17 @@ const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && ru
             <UButton type="submit" icon="i-lucide-plus" square :disabled="!newPerson.name.trim()" />
           </form>
         </div>
+      </section>
+
+      <section>
+        <h2 class="mb-1 font-medium">Standardfordeling</h2>
+        <p class="mb-3 text-sm text-muted">Hvordan nye udgifter fordeles automatisk. “Andele” bruger vægtene ovenfor, som de står, når posten oprettes.</p>
+        <div class="grid grid-cols-3 gap-1 rounded-lg bg-elevated p-1 text-sm">
+          <button v-for="[k, l] in SPLIT_OPTS" :key="k" type="button" class="rounded-md py-1.5"
+            :class="(p.default_split || 'none') === k ? 'bg-default font-medium shadow-sm' : 'text-muted'" @click="setDefaultSplit(k)">{{ l }}</button>
+        </div>
+        <UButton class="mt-3" size="sm" variant="soft" color="neutral" icon="i-lucide-list-checks" label="Fordel eksisterende poster"
+          :to="`/p/${id}?select=unsplit`" />
       </section>
 
       <section>

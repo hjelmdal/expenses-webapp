@@ -92,6 +92,7 @@ export async function loadLedger(projectId: number) {
     if (e.status === 'reading') reading++
     const amt = Number(e.amount) || 0
     const cashTip = e.method !== 'cash' && e.tip_cash ? Number(e.tip) || 0 : 0
+    const sign = spendSign(e.kind)
     if (e.kind === 'withdrawal') { addTo(cashIn, e.currency, amt); continue }
     // Depositum er ikke forbrug: kontant er ude af pungen indtil det kommer retur;
     // på kort er det kun en reservation. Står åbent indtil "fået tilbage"/modregnet.
@@ -104,27 +105,29 @@ export async function loadLedger(projectId: number) {
       continue
     }
     if (e.kind === 'income') { if (e.method === 'cash') addTo(cashIn, e.currency, amt) }
-    else if (e.method === 'cash') addTo(cashOut, e.currency, amt)
+    // Rabat i kontanter (penge tilbage) lægges i pungen.
+    else if (e.method === 'cash') addTo(e.kind === 'credit' ? cashIn : cashOut, e.currency, amt)
     else {
       if (cashTip) addTo(cashOut, e.currency, cashTip)
-      if (e.method === 'room' && !e.settled_at) { tab[e.currency] ||= { amount: 0, count: 0 }; tab[e.currency].amount += amt - cashTip; tab[e.currency].count++ }
-      // Betales senere/delvist: det udestående er beløbet minus registrerede betalinger.
-      if (e.method === 'later') {
-        const remaining = round2(amt - e.paid)
+      if (e.method === 'room' && !e.settled_at) { tab[e.currency] ||= { amount: 0, count: 0 }; tab[e.currency].amount += sign * (amt - cashTip); tab[e.currency].count++ }
+      // Betales senere/delvist: det udestående er beløbet minus registrerede betalinger
+      // (og minus drikkepenge, der allerede er givet kontant).
+      if (e.method === 'later' && e.kind === 'expense') {
+        const remaining = round2(amt - cashTip - e.paid)
         if (remaining > 0.004) due.push({ id: e.id, title: e.merchant || e.description || 'Udgift', currency: e.currency, amount: amt, paid: e.paid, remaining })
       }
     }
     if (e.kind === 'income') { income += e.base_value || 0; continue }
-    byCurrency[e.currency] = (byCurrency[e.currency] || 0) + amt
+    byCurrency[e.currency] = (byCurrency[e.currency] || 0) + sign * amt
     if (e.base_value == null) { if (amt) unconverted++; continue }
-    spent += e.base_value
-    byCategory[e.category || 'none'] = (byCategory[e.category || 'none'] || 0) + e.base_value
-    tips += e.base_tip || 0
-    service += e.base_service || 0
-    if (e.paid_by && per[e.paid_by]) per[e.paid_by].paid += e.base_value
+    const v = sign * e.base_value
+    spent += v
+    byCategory[e.category || 'none'] = (byCategory[e.category || 'none'] || 0) + v
+    if (e.kind === 'expense') { tips += e.base_tip || 0; service += e.base_service || 0 }
+    if (e.paid_by && per[e.paid_by]) per[e.paid_by].paid += v
     const fr = shareFractions(e.split)
-    if (!Object.keys(fr).length) { unsplit += e.base_value; continue }
-    for (const [pid, f] of Object.entries(fr)) if (per[Number(pid)]) per[Number(pid)].share += e.base_value * f
+    if (!Object.keys(fr).length) { unsplit += v; continue }
+    for (const [pid, f] of Object.entries(fr)) if (per[Number(pid)]) per[Number(pid)].share += v * f
   }
 
   // Betalinger (delbetalinger og rest af hotelregning) — kontante trækkes fra pungen.

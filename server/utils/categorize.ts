@@ -11,7 +11,7 @@ export function queueCategorize(entryId: number) {
 
 // Ved opstart: udgifter med tekst men uden kategori (fx fra før kategorierne fandtes).
 export function backfillCategories() {
-  const rows = useDb().prepare(`SELECT id FROM entries WHERE kind = 'expense' AND category IS NULL
+  const rows = useDb().prepare(`SELECT id FROM entries WHERE kind IN ('expense', 'credit') AND category IS NULL
     AND status = 'ready' AND coalesce(merchant, description) IS NOT NULL`).all() as any[]
   for (const r of rows) queueCategorize(r.id)
 }
@@ -30,12 +30,12 @@ async function pump() {
 async function categorizeOne(id: number) {
   const db = useDb()
   const e = db.prepare('SELECT * FROM entries WHERE id = ?').get(id) as any
-  if (!e || e.kind !== 'expense' || e.category || e.status === 'reading') return
+  if (!e || !isSpend(e.kind) || e.category || e.status === 'reading') return
   const text = [e.merchant, e.description].filter(Boolean).join(' — ')
   if (!text) return
   const prompt = `Vælg den bedste kategori for en rejseudgift. Svar KUN med nøglen, intet andet.
 Kategorier: ${CATEGORIES.map(c => `${c.key} = ${c.label} (${c.hint})`).join('; ')}.
-Udgift: "${text.slice(0, 400)}" — ${e.amount ?? '?'} ${e.currency}${e.method === 'room' ? ' (skrevet på hotelregningen)' : ''}`
+${e.kind === 'credit' ? 'Rabat/credit (vælg kategorien for det, rabatten gælder)' : 'Udgift'}: "${text.slice(0, 400)}" — ${e.amount ?? '?'} ${e.currency}${e.method === 'room' ? ' (skrevet på hotelregningen)' : ''}`
   const out = (await runClaude(prompt, { model: 'haiku', read: false })).toLowerCase()
   const key = CATEGORY_KEYS.find(k => new RegExp(`\\b${k}\\b`).test(out))
   if (key) db.prepare(`UPDATE entries SET category = ? WHERE id = ? AND category IS NULL`).run(key, id)

@@ -1,5 +1,5 @@
 // Fælles validering af post-felter (oprettelse og redigering).
-const KINDS = ['expense', 'income', 'withdrawal', 'deposit']
+const KINDS = ['expense', 'credit', 'income', 'withdrawal', 'deposit']
 
 export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   const u: Record<string, any> = {}
@@ -33,11 +33,26 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   if (u.kind === 'withdrawal') { u.method = 'cash'; u.tip_cash = 0 }
   // Depositum betales med kort (reservation) eller kontant — ikke på regning/senere.
   if (u.kind === 'deposit' && u.method && !['card', 'cash'].includes(u.method)) u.method = 'card'
-  if (u.kind && u.kind !== 'expense' && ['room', 'later'].includes(u.method)) u.method = 'card'
+  // Regning: udgifter og rabatter (credit på hotelregningen). Delvist: kun udgifter.
+  if (u.kind && !isSpend(u.kind) && ['room', 'later'].includes(u.method)) u.method = 'card'
+  if (u.kind === 'credit' && u.method === 'later') u.method = 'card'
+  if (u.kind === 'credit') { u.tip = 0; u.tip_cash = 0; u.service = 0 }
   if (u.method && !['room', 'later'].includes(u.method) && u.kind !== 'deposit') { u.settled_at = null; u.settled_method = null }
   return u
 }
 
 export function participantIds(projectId: number) {
   return (useDb().prepare('SELECT id FROM participants WHERE project_id = ?').all(projectId) as any[]).map(r => r.id)
+}
+
+// Standardfordeling for en ny udgift — et øjebliksbillede af deltagerne og deres vægte nu,
+// så en senere ændring af vægtene ikke stille flytter gamle poster (det gøres med massefordeling).
+export function defaultSplit(project: { id: number, default_split?: string | null }) {
+  if (!project.default_split) return null
+  const ps = useDb().prepare('SELECT id, weight FROM participants WHERE project_id = ? ORDER BY sort, id').all(project.id) as any[]
+  if (!ps.length) return null
+  if (project.default_split === 'equal') return JSON.stringify({ mode: 'equal', pids: ps.map(p => p.id) })
+  const shares: Record<string, number> = {}
+  for (const p of ps) if (p.weight > 0) shares[p.id] = p.weight
+  return Object.keys(shares).length ? JSON.stringify({ mode: 'weights', shares }) : null
 }
