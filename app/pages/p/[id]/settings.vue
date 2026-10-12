@@ -26,7 +26,14 @@ const addPerson = () => run(async () => {
   await api(`/projects/${id}/participants`, { method: 'POST', body: newPerson })
   Object.assign(newPerson, { name: '', weight: '1' })
 })
-const updatePerson = (x: any) => run(() => api(`/participants/${x.id}`, { method: 'PATCH', body: { name: x.name, weight: x.weight } }))
+// Vægtene redigeres i en lokal, reaktiv kopi (data fra useAsyncData er shallow), så
+// procenterne følger med, mens man taster.
+const w = reactive<Record<number, string>>({})
+watch(() => data.value?.participants, ps => { for (const x of ps || []) w[x.id] = String(x.weight) }, { immediate: true })
+const wNum = (v: any) => Math.max(0, Number(String(v ?? '').replace(',', '.')) || 0)
+const wSum = computed(() => (data.value?.participants || []).reduce((s: number, x: any) => s + wNum(w[x.id]), 0))
+const wPct = (x: any) => wSum.value ? Math.round(wNum(w[x.id]) / wSum.value * 100) : 0
+const updatePerson = (x: any) => run(() => api(`/participants/${x.id}`, { method: 'PATCH', body: { name: x.name, weight: w[x.id] } }))
 // Standardfordeling for nye udgifter. Ændres den, kan eksisterende poster opdateres i oversigten.
 const SPLIT_OPTS = [['none', 'Senere'], ['equal', 'Ligeligt'], ['weights', 'Andele']] as const
 const setDefaultSplit = (v: string) => run(() => api(`/projects/${id}`, { method: 'PATCH', body: { default_split: v } }))
@@ -60,12 +67,14 @@ const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && ru
         <div class="space-y-2">
           <div v-for="x in data.participants" :key="x.id" class="flex items-center gap-2">
             <UInput v-model="x.name" class="flex-1" @change="updatePerson(x)" />
-            <UInput v-model="x.weight" inputmode="decimal" class="w-16" :ui="{ base: 'text-right' }" @change="updatePerson(x)" />
+            <UInput v-model="w[x.id]" inputmode="decimal" class="w-16" :ui="{ base: 'text-right' }" @change="updatePerson(x)" />
+            <span class="w-10 text-right text-sm tabular-nums text-muted">{{ wPct(x) }}%</span>
             <UButton icon="i-lucide-trash-2" variant="ghost" color="neutral" square @click="delPerson(x)" />
           </div>
           <form class="flex items-center gap-2" @submit.prevent="addPerson">
             <UInput v-model="newPerson.name" placeholder="Navn" class="flex-1" />
             <UInput v-model="newPerson.weight" inputmode="decimal" class="w-16" :ui="{ base: 'text-right' }" />
+            <span class="w-10" />
             <UButton type="submit" icon="i-lucide-plus" square :disabled="!newPerson.name.trim()" />
           </form>
         </div>
