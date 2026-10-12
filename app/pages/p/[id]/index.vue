@@ -2,9 +2,24 @@
 const route = useRoute()
 const toast = useToast()
 const id = Number(route.params.id)
-const { data, refresh } = await useAsyncData(`p-${id}`, () => api<any>(`/projects/${id}`))
+const { data, refresh, error } = await useAsyncData(`p-${id}`, () => api<any>(`/projects/${id}`))
 const p = computed(() => data.value?.project)
 const s = computed(() => data.value?.summary)
+
+// "Start her": appen åbner på denne tur på denne enhed. Findes turen ikke (længere), glemmes
+// valget, og man sendes til listen i stedet for at stå på en tom side.
+const startHere = ref(false)
+onMounted(() => { startHere.value = localStorage.getItem(START_TRIP_KEY) === String(id) })
+function toggleStart() {
+  startHere.value = !startHere.value
+  startHere.value ? localStorage.setItem(START_TRIP_KEY, String(id)) : localStorage.removeItem(START_TRIP_KEY)
+  toast.add({ title: startHere.value ? `Appen åbner nu på ${p.value.name}` : 'Appen åbner på turlisten', icon: startHere.value ? 'i-lucide-pin' : 'i-lucide-pin-off' })
+}
+watch(error, (e) => {
+  if (!e) return
+  if (localStorage.getItem(START_TRIP_KEY) === String(id)) localStorage.removeItem(START_TRIP_KEY)
+  navigateTo('/', { replace: true })
+}, { immediate: true })
 
 // Mens kvitteringer aflæses, hentes turen igen hvert 3. sekund.
 let timer: any
@@ -286,6 +301,8 @@ const splitShort = (e: any) => {
       <div class="flex items-center gap-2">
         <UButton to="/" icon="i-lucide-chevron-left" variant="ghost" color="neutral" square />
         <h1 class="flex-1 truncate text-lg font-semibold">{{ p.name }}</h1>
+        <UButton icon="i-lucide-pin" :variant="startHere ? 'soft' : 'ghost'" :color="startHere ? 'primary' : 'neutral'" square
+          :aria-label="startHere ? 'Appen starter her — tryk for at slå fra' : 'Start appen på denne tur'" :aria-pressed="startHere" @click="toggleStart" />
         <UButton v-if="!selecting" icon="i-lucide-list-checks" variant="ghost" color="neutral" square aria-label="Vælg poster" @click="startSelect()" />
         <UButton :to="`/p/${id}/settings`" icon="i-lucide-settings" variant="ghost" color="neutral" square />
       </div>

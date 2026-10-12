@@ -34,6 +34,9 @@ export function dayLabel(iso: string) {
   return d.toLocaleDateString('da-DK', { weekday: 'long', day: 'numeric', month: 'long' })
 }
 
+// Turen appen åbner på (pr. enhed) — se middleware/start-trip.global.ts.
+export const START_TRIP_KEY = 'expenses-start-trip'
+
 export const KIND_LABEL: Record<string, string> = { expense: 'Udgift', credit: 'Rabat', income: 'Indtægt', withdrawal: 'Hævning', deposit: 'Depositum' }
 
 // Skalerer et foto ned til maks 2000 px JPEG før upload — kvitteringer kan

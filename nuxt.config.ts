@@ -1,4 +1,11 @@
+import { execSync } from 'node:child_process'
+
 const isDev = process.argv.includes('dev')
+// Version = 1.<antal commits>, regnet ved build — tæller selv op for hvert commit, der
+// bygges til prod. Klienten sammenligner sin version med serverens (plugins/version.client.ts).
+const version = isDev ? 'dev' : (() => {
+  try { return `1.${execSync('git rev-list --count HEAD').toString().trim()}` } catch { return '1.0' }
+})()
 
 // Expenses — udlæg og overblik pr. tur/projekt. Standalone Nuxt: Nitro er
 // backenden, data ligger i SQLite (node:sqlite) under ./data (uden for .output).
@@ -45,6 +52,7 @@ export default defineNuxtConfig({
     // Kun lokal dev uden Access foran: falder tilbage til denne bruger.
     devUser: '',
     claudeBin: '/opt/homebrew/bin/claude',
+    public: { version },
   },
   vite: {
     server: { allowedHosts: ['dev-expenses.hjelmdal.dk', 'dev.hjelmdal.dk'] },

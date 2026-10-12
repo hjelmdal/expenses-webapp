@@ -115,6 +115,7 @@ const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && ru
         <UButton color="neutral" variant="soft" :label="p.archived ? 'Genåbn' : 'Arkivér'" @click="archive" />
         <UButton color="error" variant="soft" label="Slet tur" @click="destroy" />
       </section>
+      <AppVersion />
     </div>
   </div>
 </template>

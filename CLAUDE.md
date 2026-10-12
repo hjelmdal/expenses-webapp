@@ -47,4 +47,7 @@ Prod kører det byggede `.output`. `pnpm build` bygger i `.nuxt-build`, så det 
 dev-serverens `.nuxt`/lås (et build i `.nuxt` fejler, mens dev kører — og at stoppe dev for at bygge
 fik dev-PWA'en til at genindlæse). Genstart så KUN prod-processen; manageren starter den igen efter 2 s:
 `kill $(lsof -nP -iTCP:4013 -sTCP:LISTEN -t)`. Undgå `kickstart` af manageren — den tager dev med ned.
+**Version:** `1.<antal commits>`, regnet ved build (`nuxt.config.ts`) og vist nederst på forsiden og i
+indstillinger. En åben app opdager en nyere server-version (banner + fuld indlæsning ved næste sideskift).
+Byg altid prod fra et commit, og meld versionen efter deploy: "v1.N er i prod".
 Pakker: `minimumReleaseAge: 4320` i `pnpm-workspace.yaml` (≥ 3 dage gamle).

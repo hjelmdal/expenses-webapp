@@ -48,6 +48,7 @@ async function create() {
       <div class="mb-2 text-sm text-muted">Udseende</div>
       <ColorModeSwitch />
     </div>
+    <AppVersion class="mt-8" />
 
     <UModal v-model:open="open" title="Ny tur eller projekt">
       <template #body>
