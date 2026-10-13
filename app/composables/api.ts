@@ -20,6 +20,9 @@ export function money(v: number | null | undefined, cur: string, digits?: number
   } catch { return `${v.toFixed(d)} ${cur}` }
 }
 
+// Talfelt fra en input (accepterer komma som decimaltegn); tomt/ugyldigt = 0.
+export const parseAmount = (v: any) => Number(String(v ?? '').replace(',', '.')) || 0
+
 export function localDate(d = new Date()) {
   const off = d.getTimezoneOffset() * 60000
   return new Date(d.getTime() - off).toISOString().slice(0, 10)

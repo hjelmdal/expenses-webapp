@@ -15,7 +15,8 @@ function load() {
   if (!e) return
   Object.assign(f, {
     kind: e.kind, occurred_at: e.occurred_at, merchant: e.merchant || '', description: e.description || '',
-    amount: e.amount ?? '', tip: e.tip || '', service: e.service || '', category: e.category || null, tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
+    // Tips står oveni: feltet "Beløb" er regningen uden tips; i databasen er amount inkl. tips.
+    amount: e.amount == null ? '' : e.kind === 'expense' ? Math.round((e.amount - (e.tip || 0)) * 100) / 100 : e.amount, tip: e.tip || '', service: e.service || '', category: e.category || null, tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
     paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '',
   })
   split.value = e.split || null
@@ -31,11 +32,20 @@ watch(() => data.value?.entry?.status, (st, old) => {
 }, { immediate: true })
 onBeforeUnmount(() => clearInterval(timer))
 
+// Det betalte i alt (= amount i databasen): regningen + tips. Tomt felt uden tips = intet beløb endnu.
+const total = computed(() => {
+  const tip = f.kind === 'expense' ? parseAmount(f.tip) : 0
+  if (String(f.amount ?? '').trim() === '' && !tip) return null
+  return Math.round((parseAmount(f.amount) + tip) * 100) / 100
+})
+// Det der skal betales til stedet: i alt minus tips givet kontant ved siden af.
+const toPay = computed(() => (total.value || 0) - (f.tip_cash && f.method !== 'cash' ? parseAmount(f.tip) : 0))
+
 const saving = ref(false)
 async function save(back = true) {
   saving.value = true
   try {
-    await api(`/entries/${eid}`, { method: 'PATCH', body: { ...f, split: split.value } })
+    await api(`/entries/${eid}`, { method: 'PATCH', body: { ...f, amount: total.value, tip: f.kind === 'expense' ? f.tip : 0, split: split.value } })
     if (back) await navigateTo(`/p/${pid}`)
     else await refresh()
   } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { saving.value = false }
@@ -65,7 +75,7 @@ async function delImage(aid: number) {
   await refresh()
 }
 async function reread(reset: boolean) {
-  if (reset && !confirm('Ryd beløb, tip og tekst og aflæs forfra?')) return
+  if (reset && !confirm('Ryd beløb, drikkepenge og tekst og aflæs forfra?')) return
   if (!reset) await save(false)
   await api(`/entries/${eid}/read${reset ? '?reset=1' : ''}`, { method: 'POST' })
   await refresh()
@@ -95,25 +105,6 @@ async function reopen() {
   if (!confirm(e.value?.kind === 'deposit' ? 'Sæt depositummet tilbage som udestående?' : 'Sæt posten tilbage på den åbne hotelregning?')) return
   await api(`/entries/${eid}`, { method: 'PATCH', body: { settled: false } })
   await refresh()
-}
-// Drikkepenge givet bagefter (fx til chaufføren efter turen) bliver en egen post: egen dato,
-// egen "lagt ud af" og egen betalingsmåde — men samme kategori og fordeling som posten.
-const tipOpen = ref(false)
-const tp = reactive<any>({ amount: '', method: 'cash', paid_by: null })
-function openTip() { Object.assign(tp, { amount: '', method: 'cash', paid_by: f.paid_by }); tipOpen.value = true }
-const savingTip = ref(false)
-async function saveTip() {
-  savingTip.value = true
-  try {
-    await save(false)
-    await api(`/projects/${pid}/entries`, { method: 'POST', body: {
-      kind: 'expense', amount: tp.amount, tip: tp.amount, method: tp.method, currency: f.currency, paid_by: tp.paid_by,
-      description: `Drikkepenge · ${f.merchant || f.description || 'udgift'}`.slice(0, 500), category: f.category,
-      split: split.value, occurred_at: localDate(),
-    } })
-    tipOpen.value = false
-    toast.add({ title: `Drikkepenge ${money(Number(String(tp.amount).replace(',', '.')), f.currency)} registreret`, color: 'success' })
-  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) } finally { savingTip.value = false }
 }
 const rateText = computed(() => {
   if (!e.value?.rate || e.value.currency === base.value) return ''
@@ -158,7 +149,7 @@ const rateText = computed(() => {
       <KindTabs v-model="f.kind" @change="k => { if (k === 'withdrawal') f.method = 'cash'; else if (!isSpend(k) && ['room', 'later'].includes(f.method) || k === 'credit' && f.method === 'later') f.method = 'card' }" />
 
       <div class="flex items-end gap-2">
-        <UFormField label="Beløb i alt" class="flex-1"><UInput v-model="f.amount" inputmode="decimal" size="lg" class="w-full" :ui="{ base: 'tabular-nums' }" /></UFormField>
+        <UFormField label="Beløb" class="flex-1"><UInput v-model="f.amount" inputmode="decimal" size="lg" class="w-full" :ui="{ base: 'tabular-nums' }" /></UFormField>
         <CurrencyPicker v-model="f.currency" :options="[data.project.currency, base]" size="lg" />
       </div>
       <p v-if="rateText" class="-mt-3 text-xs text-muted">≈ {{ money(e.base_value, base) }} · {{ rateText }}</p>
@@ -202,27 +193,25 @@ const rateText = computed(() => {
 
       <!-- Betales senere: betalinger -->
       <div v-if="f.kind === 'expense' && f.method === 'later'" class="-mt-2 space-y-2 rounded-lg bg-elevated p-3 text-sm">
-        <div class="flex justify-between"><span class="text-muted">Betalt</span><span class="tabular-nums">{{ money(e.paid, e.currency) }} af {{ money(Number(f.amount) || 0, e.currency) }}</span></div>
+        <div class="flex justify-between"><span class="text-muted">Betalt</span><span class="tabular-nums">{{ money(e.paid, e.currency) }} af {{ money(toPay, e.currency) }}</span></div>
         <div v-for="p in e.payments" :key="p.id" class="flex items-center justify-between text-xs">
           <span>{{ p.occurred_at }} · {{ p.method === 'cash' ? 'kontant' : 'kort' }}</span>
           <span class="flex items-center gap-1 tabular-nums">{{ money(p.amount, p.currency) }}
             <UButton size="xs" icon="i-lucide-x" variant="ghost" color="neutral" square @click="delPayment(p.id)" /></span>
         </div>
         <div class="flex items-center gap-2 pt-1">
-          <UInput v-model="newPay.amount" inputmode="decimal" :placeholder="`Rest ${money(Math.max(0, (Number(f.amount) || 0) - (e.tip_cash ? Number(e.tip) || 0 : 0) - e.paid), e.currency)}`" size="sm" class="flex-1" />
+          <UInput v-model="newPay.amount" inputmode="decimal" :placeholder="`Rest ${money(Math.max(0, toPay - e.paid), e.currency)}`" size="sm" class="flex-1" />
           <MethodPicker v-model="newPay.method" :room="false" size="sm" />
           <UButton size="sm" icon="i-lucide-plus" square :disabled="!newPay.amount" @click="addPayment" />
         </div>
       </div>
 
       <div v-if="f.kind === 'expense'" class="grid grid-cols-2 gap-2">
-        <TipInput v-model:tip="f.tip" v-model:tip-cash="f.tip_cash" :method="f.method" />
+        <TipInput v-model:tip="f.tip" v-model:tip-cash="f.tip_cash" :method="f.method" :total="total" :currency="f.currency" />
         <UFormField label="Heraf service charge" help="Fast tillæg på regningen">
           <UInput v-model="f.service" inputmode="decimal" class="w-full" placeholder="0" />
         </UFormField>
       </div>
-      <UButton v-if="f.kind === 'expense' && e.kind === 'expense'" class="-mt-2" size="sm" variant="soft" color="neutral" icon="i-lucide-hand-coins"
-        label="Giv drikkepenge bagefter" @click="openTip" />
 
       <template v-if="isSpend(f.kind) && people.length">
         <UFormField :label="f.kind === 'credit' ? 'Modtaget af' : 'Betalt af'">
@@ -246,22 +235,5 @@ const rateText = computed(() => {
     <div v-if="viewing" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2" @click="viewing = null">
       <img :src="attUrl(viewing)" class="max-h-full max-w-full object-contain">
     </div>
-    <UModal v-model:open="tipOpen" title="Drikkepenge bagefter">
-      <template #body>
-        <form class="space-y-4" @submit.prevent="saveTip">
-          <p class="text-sm text-muted">Bliver en egen post med i dag som dato — samme kategori og fordeling som {{ f.merchant || 'posten' }}.</p>
-          <UFormField :label="`Beløb (${f.currency})`"><UInput v-model="tp.amount" inputmode="decimal" size="xl" class="w-full" autofocus :ui="{ base: 'text-2xl tabular-nums' }" /></UFormField>
-          <MethodPicker v-model="tp.method" :room="false" />
-          <div v-if="people.length">
-            <div class="mb-1 text-xs text-muted">Givet af</div>
-            <div class="flex flex-wrap gap-1.5">
-              <UButton v-for="x in people" :key="x.id" type="button" size="sm" :variant="tp.paid_by === x.id ? 'solid' : 'soft'" color="neutral"
-                :label="x.name" @click="tp.paid_by = tp.paid_by === x.id ? null : x.id" />
-            </div>
-          </div>
-          <UButton type="submit" block size="lg" :loading="savingTip" :disabled="!tp.amount" label="Gem" />
-        </form>
-      </template>
-    </UModal>
   </div>
 </template>

@@ -12,7 +12,8 @@ input skal være lynhurtigt (foto eller beløb), alt andet kan ordnes bagefter.
 ## Model
 `projects` → `members` (e-mails med adgang) · `participants` (dem der deler, med standard-vægt)
 · `entries` (kind: expense | withdrawal | income) → `attachments` (kvitteringsbilleder).
-- `amount` er det betalte i alt **inkl.** `tip`. `split` er JSON (`equal` + pids, eller `weights`
+- `amount` er det betalte i alt **inkl.** `tip`. UI'et viser drikkepenge **oveni**: feltet "Beløb" = regningen
+  (amount − tip), "Tilføj drikkepenge" ved siden af, og listen viser begge ("9.500 + 1.000 drikkepenge"). `split` er JSON (`equal` + pids, eller `weights`
   + shares); NULL = "ikke fordelt endnu".
 - Kurs beregnes ved læsning (`server/utils/ledger.ts`): fast (`base_amount` sat, fx hævning) →
   kontantkurs (sum af hævningers DKK / THB) for kontantposter → ECB-markedskurs (frankfurter.dev,

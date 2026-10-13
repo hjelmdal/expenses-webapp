@@ -149,6 +149,12 @@ function snap(target: number | null = null, fromLibrary = false) {
   ;(fromLibrary ? library : camera).value?.click()
 }
 
+// Kvittering-knappen: vælg kamera eller eksisterende billeder/filer.
+const receiptItems = [
+  { label: 'Kamera', icon: 'i-lucide-camera', onSelect: () => snap() },
+  { label: 'Fotos / arkiv', icon: 'i-lucide-images', onSelect: () => snap(null, true) },
+]
+
 async function onFiles(ev: Event) {
   const input = ev.target as HTMLInputElement
   const files = input.files
@@ -251,11 +257,18 @@ function openQuick(kind = 'expense') {
     occurred_at: q.occurred_at || today() })
   quick.value = true
 }
+// Tips står oveni beløbet; serveren gemmer amount inkl. tips. "Det hele er drikkepenge": beløbet ER tipset.
+function quickAmounts() {
+  if (q.kind !== 'expense') return { amount: q.amount, tip: 0 }
+  if (q.all_tip) return { amount: q.amount, tip: q.amount }
+  return { amount: quickTotal.value, tip: q.tip }
+}
+const quickTotal = computed(() => Math.round((parseAmount(q.amount) + parseAmount(q.tip)) * 100) / 100)
 const savingQuick = ref(false)
 async function saveQuick() {
   savingQuick.value = true
   try {
-    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, tip: q.kind === 'expense' && q.all_tip ? q.amount : q.tip, paid_by: q.kind === 'withdrawal' ? null : payer.value } })
+    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, ...quickAmounts(), paid_by: q.kind === 'withdrawal' ? null : payer.value } })
     if (q.kind === 'expense' && q.method === 'later' && Number(String(q.paid_now).replace(',', '.')) > 0) {
       await api(`/entries/${r.id}/payments`, { method: 'POST', body: { amount: q.paid_now, method: q.paid_method, paid_by: payer.value, date: q.occurred_at } })
     }
@@ -283,10 +296,19 @@ const rowMeta = (e: any) => [
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
   e.method === 'room' ? (e.settled_at ? 'regning betalt' : 'på regning') : '',
   e.kind === 'deposit' ? (!e.settled_at ? (e.method === 'cash' ? 'kontant · ude' : 'reserveret på kort') : e.settled_method === 'refund' ? 'fået tilbage' : 'modregnet') : '',
-  e.method === 'later' && e.amount ? (e.amount - e.paid > 0.004 ? `rest ${money(e.amount - e.paid, e.currency)}` : 'betalt') : '',
-  e.tip ? `tip ${money(e.tip, e.currency)}${e.tip_cash && e.method !== 'cash' ? ' kontant' : ''}` : '',
+  e.method === 'later' && e.amount ? (laterRest(e) > 0.004 ? `rest ${money(laterRest(e), e.currency)}` : 'betalt') : '',
+  tipText(e),
   splitShort(e),
 ].filter(Boolean).join(' · ')
+// Rest på "betales senere": i alt minus kontant-tips (givet ved siden af) minus betalinger.
+const laterRest = (e: any) => e.amount - (e.tip_cash ? e.tip || 0 : 0) - e.paid
+// Beløbet med tips står til højre; her står regningen og tipsene hver for sig.
+const tipText = (e: any) => {
+  if (!e.tip || e.kind !== 'expense') return ''
+  const cash = e.tip_cash && e.method !== 'cash' ? ' kontant' : ''
+  const bill = (e.amount || 0) - e.tip
+  return bill > 0.004 ? `${money(bill, e.currency)} + ${money(e.tip, e.currency)} drikkepenge${cash}` : `drikkepenge${cash}`
+}
 const splitShort = (e: any) => {
   if (!isSpend(e.kind)) return ''
   if (!e.split) return 'ikke fordelt'
@@ -617,9 +639,10 @@ const splitShort = (e: any) => {
         <UIcon name="i-lucide-chevron-down" class="size-4" />
       </button>
       <div class="mx-auto flex max-w-xl gap-2">
-        <UButton size="xl" class="flex-1 justify-center" icon="i-lucide-camera" :loading="uploading" label="Kvittering" @click="snap()" />
-        <UButton size="xl" color="neutral" variant="soft" icon="i-lucide-images" square aria-label="Fra billeder" @click="snap(null, true)" />
-        <UButton size="xl" color="neutral" variant="soft" icon="i-lucide-keyboard" label="Beløb" @click="openQuick()" />
+        <UDropdownMenu :items="receiptItems" :content="{ side: 'top', align: 'start' }" :ui="{ content: 'min-w-56', item: 'p-3 text-base' }" class="flex-1">
+          <UButton size="xl" block icon="i-lucide-camera" trailing-icon="i-lucide-chevron-up" :loading="uploading" label="Kvittering" />
+        </UDropdownMenu>
+        <UButton size="xl" color="neutral" variant="soft" icon="i-lucide-keyboard" label="Manuel" @click="openQuick()" />
       </div>
     </div>
 
@@ -662,8 +685,8 @@ const splitShort = (e: any) => {
             <USwitch v-model="q.all_tip" />
             Det hele er drikkepenge
           </label>
-          <TipInput v-if="q.kind === 'expense' && !q.all_tip" v-model:tip="q.tip" v-model:tip-cash="q.tip_cash" :method="q.method" />
-          <UButton type="submit" block size="lg" :loading="savingQuick" :disabled="!q.amount" label="Gem" />
+          <TipInput v-if="q.kind === 'expense' && !q.all_tip" v-model:tip="q.tip" v-model:tip-cash="q.tip_cash" :method="q.method" :total="quickTotal" :currency="q.currency" />
+          <UButton type="submit" block size="lg" :loading="savingQuick" :disabled="!q.amount && !(q.kind === 'expense' && parseAmount(q.tip))" label="Gem" />
         </form>
       </template>
     </UModal>

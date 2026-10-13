@@ -37,6 +37,10 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   if (u.kind && !isSpend(u.kind) && ['room', 'later'].includes(u.method)) u.method = 'card'
   if (u.kind === 'credit' && u.method === 'later') u.method = 'card'
   if (u.kind === 'credit') { u.tip = 0; u.tip_cash = 0; u.service = 0 }
+  // amount er inkl. tips — tips større end hele beløbet er en tastefejl (fx tips uden beløb).
+  if ('amount' in u && 'tip' in u && u.tip > (u.amount ?? 0) + 0.004) {
+    throw createError({ statusCode: 400, statusMessage: 'Drikkepenge kan ikke være større end beløbet i alt' })
+  }
   if (u.method && !['room', 'later'].includes(u.method) && u.kind !== 'deposit') { u.settled_at = null; u.settled_method = null }
   return u
 }
