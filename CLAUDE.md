@@ -15,6 +15,9 @@ input skal være lynhurtigt (foto eller beløb), alt andet kan ordnes bagefter.
 - `amount` er det betalte i alt **inkl.** `tip`. UI'et viser drikkepenge **oveni**: feltet "Beløb" = regningen
   (amount − tip), "Tilføj drikkepenge" ved siden af, og listen viser begge ("9.500 + 1.000 drikkepenge"). `split` er JSON (`equal` + pids, eller `weights`
   + shares); NULL = "ikke fordelt endnu".
+- `stays` (hoteller) deler hotelregningen op: regningsposter og depositum placeres ud fra datoen
+  (`server/utils/stays.ts`; skiftedag = hotellet man forlader, indtil dets regning er betalt), eller
+  efter `entries.stay_id`, som man kan vælge på posten, og som låses ved betaling.
 - Kurs beregnes ved læsning (`server/utils/ledger.ts`): fast (`base_amount` sat, fx hævning) →
   kontantkurs (sum af hævningers DKK / THB) for kontantposter → ECB-markedskurs (frankfurter.dev,
   cachet pr. dag i `rates`).

@@ -38,6 +38,7 @@ export async function loadLedger(projectId: number) {
   const atts = db.prepare(`SELECT a.id, a.entry_id FROM attachments a JOIN entries e ON e.id = a.entry_id
     WHERE e.project_id = ? ORDER BY a.id`).all(projectId) as any[]
   const base = project.base_currency
+  const stays = loadStays(projectId)
 
   // Kontantkurs pr. valuta = hvad hævningerne reelt kostede (inkl. gebyrer).
   const cashRate: Record<string, number> = {}
@@ -63,6 +64,8 @@ export async function loadLedger(projectId: number) {
     entries.push({
       ...e,
       split,
+      // Hotel: valgt (stay_id) eller foreslået ud fra datoen.
+      stay: onHotel(e) ? stayFor(e, stays) : null,
       rate,
       rate_source: rateSource,
       base_value: rate != null ? round2(amount * rate) : null,
@@ -84,9 +87,16 @@ export async function loadLedger(projectId: number) {
   // kort/regning, og hotelregninger der er betalt kontant.
   const cashIn: Record<string, number> = {}
   const cashOut: Record<string, number> = {}
-  const tab: Record<string, { amount: number, count: number }> = {}
+  // Åbne hotelregninger pr. hotel og valuta (hotel null = poster uden for et registreret ophold).
+  const tab: { stay: number | null, name: string | null, currency: string, amount: number, count: number, deposit: number, ids: number[] }[] = []
+  const tabFor = (stay: number | null, currency: string) => {
+    let t = tab.find(x => x.stay === stay && x.currency === currency)
+    if (!t) tab.push(t = { stay, name: stays.find(x => x.id === stay)?.name || null, currency, amount: 0, count: 0, deposit: 0, ids: [] })
+    return t
+  }
   const deposits: Record<string, { amount: number, cash: number, card: number, count: number }> = {}
   const due: { id: number, title: string, currency: string, amount: number, paid: number, remaining: number }[] = []
+  const depositsOpen: any[] = []
   const addTo = (o: Record<string, number>, c: string, v: number) => { o[c] = (o[c] || 0) + v }
   for (const e of entries) {
     if (e.status === 'reading') reading++
@@ -99,6 +109,7 @@ export async function loadLedger(projectId: number) {
     if (e.kind === 'deposit') {
       if (e.method === 'cash') addTo(cashOut, e.currency, amt - (Number(e.refunded) || 0))
       if (!e.settled_at) {
+        depositsOpen.push(e)
         const d = deposits[e.currency] ||= { amount: 0, cash: 0, card: 0, count: 0 }
         d.amount += amt; d.count++; e.method === 'cash' ? (d.cash += amt) : (d.card += amt)
       }
@@ -109,7 +120,7 @@ export async function loadLedger(projectId: number) {
     else if (e.method === 'cash') addTo(e.kind === 'credit' ? cashIn : cashOut, e.currency, amt)
     else {
       if (cashTip) addTo(cashOut, e.currency, cashTip)
-      if (e.method === 'room' && !e.settled_at) { tab[e.currency] ||= { amount: 0, count: 0 }; tab[e.currency].amount += sign * (amt - cashTip); tab[e.currency].count++ }
+      if (e.method === 'room' && !e.settled_at) { const t = tabFor(e.stay, e.currency); t.amount += sign * (amt - cashTip); t.count++; t.ids.push(e.id) }
       // Betales senere/delvist: det udestående er beløbet minus registrerede betalinger
       // (og minus drikkepenge, der allerede er givet kontant).
       if (e.method === 'later' && e.kind === 'expense') {
@@ -130,11 +141,18 @@ export async function loadLedger(projectId: number) {
     for (const [pid, f] of Object.entries(fr)) if (per[Number(pid)]) per[Number(pid)].share += v * f
   }
 
+  // Depositum der kan modregnes i en regning: samme hotel, eller uden hotel.
+  for (const t of tab) {
+    t.amount = round2(t.amount)
+    t.deposit = round2(depositsOpen.filter(d => d.currency === t.currency && (d.stay === t.stay || d.stay == null)).reduce((s, d) => s + (Number(d.amount) || 0), 0))
+  }
+  tab.sort((a, b) => (stays.findIndex(x => x.id === a.stay) - stays.findIndex(x => x.id === b.stay)))
+
   // Betalinger (delbetalinger og rest af hotelregning) — kontante trækkes fra pungen.
   for (const p of pays) if (p.method === 'cash') addTo(cashOut, p.currency, p.amount)
 
   return {
-    project, participants, members, entries,
+    project, participants, members, entries, stays,
     summary: {
       base, spent: round2(spent), income: round2(income), tips: round2(tips), service: round2(service), unsplit: round2(unsplit),
       unconverted, reading, byCurrency,

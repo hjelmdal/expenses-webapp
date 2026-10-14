@@ -1,4 +1,4 @@
-// "Hotelregningen er betalt": lukker alle åbne regningsposter i én valuta.
+// "Hotelregningen er betalt": lukker et hotels åbne regningsposter i én valuta.
 // Åbne depositum i samme valuta kan modregnes: de dækker regningen først, et
 // overskud kommer retur, og kun resten betales (registreres som en betaling, så
 // kontant rest trækkes fra pungen). Er det trukne DKK-beløb for resten kendt, får
@@ -14,8 +14,11 @@ export default defineEventHandler(async (event) => {
   const payer = pids.includes(Number(b.paid_by)) ? Number(b.paid_by) : null
   const charged = numOrNull(b.base_amount)
   const db = useDb()
-  const open = db.prepare(`SELECT * FROM entries WHERE project_id = ? AND method = 'room' AND settled_at IS NULL
-    AND kind IN ('expense', 'credit') AND currency = ?`).all(id, currency) as any[]
+  // Pr. hotel: kun posterne på dette hotels regning (stay_id null = poster uden hotel).
+  const stays = loadStays(id)
+  const stay = stays.find(s => s.id === Number(b.stay_id))?.id ?? null
+  const open = (db.prepare(`SELECT * FROM entries WHERE project_id = ? AND method = 'room' AND settled_at IS NULL
+    AND kind IN ('expense', 'credit') AND currency = ?`).all(id, currency) as any[]).filter(e => stayFor(e, stays) === stay)
   if (!open.length) throw createError({ statusCode: 400, statusMessage: 'Ingen åben regning' })
   // Rabatter/credits på regningen trækker fra.
   const onTab = (e: any) => spendSign(e.kind) * ((Number(e.amount) || 0) - (e.tip_cash ? Number(e.tip) || 0 : 0))
@@ -23,25 +26,27 @@ export default defineEventHandler(async (event) => {
 
   let left = total, applied = 0, refunded = 0
   if (b.use_deposits) {
-    const deps = db.prepare(`SELECT * FROM entries WHERE project_id = ? AND kind = 'deposit' AND settled_at IS NULL
-      AND currency = ? ORDER BY occurred_at, id`).all(id, currency) as any[]
-    const upd = db.prepare(`UPDATE entries SET settled_at = ?, settled_method = 'applied', refunded = ?, updated_at = datetime('now') WHERE id = ?`)
+    const deps = (db.prepare(`SELECT * FROM entries WHERE project_id = ? AND kind = 'deposit' AND settled_at IS NULL
+      AND currency = ? ORDER BY occurred_at, id`).all(id, currency) as any[]).filter(d => [stay, null].includes(stayFor(d, stays)))
+    const upd = db.prepare(`UPDATE entries SET settled_at = ?, settled_method = 'applied', refunded = ?, stay_id = coalesce(stay_id, ?), updated_at = datetime('now') WHERE id = ?`)
     for (const d of deps) {
       const amt = Number(d.amount) || 0
       const used = Math.min(amt, left)
       left = Math.round((left - used) * 100) / 100
       applied += used; refunded += amt - used
-      upd.run(date, Math.round((amt - used) * 100) / 100, d.id)
+      upd.run(date, Math.round((amt - used) * 100) / 100, stay, d.id)
     }
   }
   const remainder = left
   if (remainder > 0) {
     db.prepare(`INSERT INTO payments (project_id, entry_id, amount, currency, method, paid_by, occurred_at, note)
-      VALUES (?, NULL, ?, ?, ?, ?, ?, 'Hotelregning')`).run(id, remainder, currency, method, payer, date)
+      VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`).run(id, remainder, currency, method, payer, date, ['Hotelregning', stays.find(s => s.id === stay)?.name].filter(Boolean).join(' · '))
   }
   const rate = charged && remainder > 0 ? charged / remainder : null
+  // Posterne låses til hotellet (stay_id), så de ikke flytter, når hotellet er markeret checket ud.
   const upd = db.prepare(`UPDATE entries SET settled_at = ?, settled_method = ?, paid_by = coalesce(?, paid_by),
-    base_amount = coalesce(?, base_amount), updated_at = datetime('now') WHERE id = ?`)
-  for (const e of open) upd.run(date, remainder > 0 || !applied ? method : 'deposit', payer, rate != null ? Math.round((Number(e.amount) || 0) * rate * 100) / 100 : null, e.id)
+    base_amount = coalesce(?, base_amount), stay_id = coalesce(stay_id, ?), updated_at = datetime('now') WHERE id = ?`)
+  for (const e of open) upd.run(date, remainder > 0 || !applied ? method : 'deposit', payer, rate != null ? Math.round((Number(e.amount) || 0) * rate * 100) / 100 : null, stay, e.id)
+  if (stay) db.prepare('UPDATE stays SET settled_at = ? WHERE id = ?').run(date, stay)
   return { settled: open.length, total, applied, refunded, remainder }
 })

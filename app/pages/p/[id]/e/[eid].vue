@@ -5,6 +5,8 @@ const pid = Number(route.params.id)
 const eid = Number(route.params.eid)
 const { data, refresh } = await useAsyncData(`e-${eid}`, () => api<any>(`/entries/${eid}`))
 const people = computed<any[]>(() => data.value?.participants || [])
+const stays = computed<any[]>(() => data.value?.stays || [])
+const stayName = (sid: number | null) => stays.value.find(x => x.id === sid)?.name
 const base = computed(() => data.value?.project.base_currency || 'DKK')
 
 const f = reactive<any>({})
@@ -17,7 +19,7 @@ function load() {
     kind: e.kind, occurred_at: e.occurred_at, merchant: e.merchant || '', description: e.description || '',
     // Tips står oveni: feltet "Beløb" er regningen uden tips; i databasen er amount inkl. tips.
     amount: e.amount == null ? '' : e.kind === 'expense' ? Math.round((e.amount - (e.tip || 0)) * 100) / 100 : e.amount, tip: e.tip || '', service: e.service || '', category: e.category || null, tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
-    paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '',
+    paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '', stay_id: e.stay_id ?? null,
   })
   split.value = e.split || null
 }
@@ -182,6 +184,15 @@ const rateText = computed(() => {
         <span v-else class="text-muted">På den åbne hotelregning</span>
         <UButton v-if="e.settled_at" size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
       </div>
+      <!-- Hotel: foreslået ud fra datoen, eller valgt -->
+      <UFormField v-if="stays.length && (isSpend(f.kind) && f.method === 'room' || f.kind === 'deposit')" label="Hotel">
+        <div class="flex flex-wrap gap-1.5">
+          <UButton size="sm" color="neutral" :variant="f.stay_id == null ? 'solid' : 'soft'" @click="f.stay_id = null"
+            :label="e.stay_id == null && stayName(e.stay) ? `Efter dato · ${stayName(e.stay)}` : 'Efter dato'" />
+          <UButton v-for="x in stays" :key="x.id" size="sm" color="neutral" :variant="f.stay_id === x.id ? 'solid' : 'soft'"
+            :label="x.name" @click="f.stay_id = x.id" />
+        </div>
+      </UFormField>
       <!-- Depositum: status og retur -->
       <div v-if="f.kind === 'deposit' && e.kind === 'deposit'" class="-mt-2 flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2 text-sm">
         <span v-if="!e.settled_at" class="text-muted">{{ e.method === 'cash' ? 'Kontant — ude af pungen' : 'Reserveret på kort' }}, tæller ikke som forbrug</span>

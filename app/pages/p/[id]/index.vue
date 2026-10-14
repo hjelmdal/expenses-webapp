@@ -149,12 +149,8 @@ function snap(target: number | null = null, fromLibrary = false) {
   ;(fromLibrary ? library : camera).value?.click()
 }
 
-// Kvittering-knappen: vælg kamera eller eksisterende billeder/filer.
-const receiptItems = [
-  { label: 'Kamera', icon: 'i-lucide-camera', onSelect: () => snap() },
-  { label: 'Fotos / arkiv', icon: 'i-lucide-images', onSelect: () => snap(null, true) },
-]
-
+// Kvittering-knappen bruger filvælgeren uden "capture": telefonen tilbyder selv
+// kamera, fotos og filer i ét tryk.
 async function onFiles(ev: Event) {
   const input = ev.target as HTMLInputElement
   const files = input.files
@@ -180,14 +176,79 @@ async function onFiles(ev: Event) {
 
 // --- Hotelregning: afregn alle åbne regningsposter på én gang
 const settleOpen = ref(false)
-const st = reactive<any>({ currency: '', total: 0, method: 'card', paid_by: null, base_amount: '', date: '', use_deposits: false })
-const stDeposit = computed(() => s.value?.deposits?.[st.currency]?.amount || 0)
+const st = reactive<any>({ stay_id: null, name: '', currency: '', total: 0, deposit: 0, method: 'card', paid_by: null, base_amount: '', date: '', use_deposits: false })
+const stDeposit = computed(() => st.deposit)
 const stRemainder = computed(() => Math.max(0, st.total - (st.use_deposits ? stDeposit.value : 0)))
 const stBack = computed(() => st.use_deposits ? Math.max(0, stDeposit.value - st.total) : 0)
-function openSettle(currency: string, total: number) {
-  Object.assign(st, { currency, total, method: 'card', paid_by: payer.value, base_amount: '', date: localDate(), use_deposits: false })
+// t = én åben regning (pr. hotel og valuta) fra summary.tab.
+function openSettle(t: any) {
+  Object.assign(st, { stay_id: t.stay, name: t.name || '', currency: t.currency, total: t.amount, deposit: t.deposit, method: 'card', paid_by: payer.value, base_amount: '', date: localDate(), use_deposits: false })
+  billOpen.value = false
   settleOpen.value = true
 }
+
+// Regningen post for post — til at holde op mod hotellets udskrift ved check-ud.
+const billOpen = ref(false)
+// Regningen følges via hotel + valuta, så den opdateres, når en post rettes eller tilføjes.
+const billKey = ref<{ stay: number | null, currency: string } | null>(null)
+const bill = computed(() => s.value?.tab.find((t: any) => t.stay === billKey.value?.stay && t.currency === billKey.value?.currency))
+const ticked = ref(new Set<number>())
+const billRows = computed(() => (data.value?.entries || []).filter((e: any) => bill.value?.ids.includes(e.id))
+  .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at) || a.id - b.id))
+const onBill = (e: any) => spendSign(e.kind) * ((e.amount || 0) - (e.tip_cash ? e.tip || 0 : 0))
+function openBill(t: any) {
+  billKey.value = { stay: t.stay, currency: t.currency }
+  Object.assign(nl, { description: '', amount: '', occurred_at: localDate() })
+  hotelTotal.value = ''
+  editing.value = null
+  billOpen.value = true
+}
+
+// Justering ved check-ud: ret et beløb, tilføj en manglende post, eller bogfør forskellen.
+const editing = ref<number | null>(null)
+const editVal = ref('')
+function editRow(r: any) { editing.value = r.id; editVal.value = String(Math.abs(onBill(r))) }
+async function saveRow(r: any) {
+  if (editing.value !== r.id) return
+  editing.value = null
+  const v = parseAmount(editVal.value)
+  if (Math.abs(v - Math.abs(onBill(r))) < 0.005) return
+  try {
+    // Kontante drikkepenge står ikke på regningen, men er en del af postens beløb.
+    await api(`/entries/${r.id}`, { method: 'PATCH', body: { amount: Math.round((v + (r.tip_cash ? r.tip || 0 : 0)) * 100) / 100 } })
+    await refresh()
+  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) }
+}
+const nl = reactive({ description: '', amount: '', occurred_at: '' })
+// Negativt beløb = rabat/credit på regningen.
+async function addBillLine(description: string, amount: number, date: string) {
+  if (!bill.value || !amount) return
+  try {
+    await api(`/projects/${id}/entries`, { method: 'POST', body: {
+      kind: amount < 0 ? 'credit' : 'expense', amount: Math.abs(amount), method: 'room', currency: bill.value.currency,
+      description, occurred_at: date, stay_id: bill.value.stay, paid_by: payer.value,
+    } })
+    await refresh()
+    return true
+  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) }
+}
+async function addMissing() {
+  if (await addBillLine(nl.description.trim() || 'Post på hotelregningen', parseAmount(nl.amount), nl.occurred_at || localDate())) {
+    Object.assign(nl, { description: '', amount: '' })
+  }
+}
+const hotelTotal = ref('')
+const billDiff = computed(() => bill.value && hotelTotal.value.trim() ? Math.round((parseAmount(hotelTotal.value) - bill.value.amount) * 100) / 100 : 0)
+async function bookDiff() {
+  if (await addBillLine('Difference på hotelregningen', billDiff.value, localDate())) hotelTotal.value = ''
+}
+function tick(eid: number) {
+  const n = new Set(ticked.value)
+  n.has(eid) ? n.delete(eid) : n.add(eid)
+  ticked.value = n
+}
+const billTicked = computed(() => billRows.value.filter((e: any) => ticked.value.has(e.id)).length)
+const dm = (d: string) => `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}`
 async function settle() {
   try {
     const r = await api<any>(`/projects/${id}/settle`, { method: 'POST', body: st })
@@ -294,7 +355,7 @@ const rowMeta = (e: any) => [
   isSpend(e.kind) ? categoryOf(e.category)?.label || '' : '',
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
-  e.method === 'room' ? (e.settled_at ? 'regning betalt' : 'på regning') : '',
+  e.method === 'room' ? [e.settled_at ? 'regning betalt' : 'på regning', (data.value?.stays || []).find((x: any) => x.id === e.stay)?.name].filter(Boolean).join(' · ') : '',
   e.kind === 'deposit' ? (!e.settled_at ? (e.method === 'cash' ? 'kontant · ude' : 'reserveret på kort') : e.settled_method === 'refund' ? 'fået tilbage' : 'modregnet') : '',
   e.method === 'later' && e.amount ? (laterRest(e) > 0.004 ? `rest ${money(laterRest(e), e.currency)}` : 'betalt') : '',
   tipText(e),
@@ -405,14 +466,15 @@ const splitShort = (e: any) => {
             </div>
           </div>
         </div>
-        <div v-for="(t, c) in s.tab" :key="'tab-' + c" class="col-span-2 rounded-xl border border-warning/50 bg-warning/5 p-3">
-          <div class="flex items-start justify-between">
-            <div>
-              <div class="text-muted">Åben hotelregning</div>
-              <div class="text-lg font-medium tabular-nums">{{ money(t.amount, String(c)) }}</div>
-              <div class="text-xs text-muted">{{ t.count }} post{{ t.count === 1 ? '' : 'er' }} — tæller allerede med i forbruget</div>
+        <div v-for="t in s.tab" :key="`tab-${t.stay}-${t.currency}`" class="col-span-2 cursor-pointer rounded-xl border border-warning/50 bg-warning/5 p-3"
+          role="button" @click="openBill(t)">
+          <div class="flex items-start justify-between gap-2">
+            <div class="min-w-0">
+              <div class="flex items-center gap-1 text-muted"><UIcon name="i-lucide-hotel" class="size-4 shrink-0" /><span class="truncate">{{ t.name || 'Åben hotelregning' }}</span></div>
+              <div class="text-lg font-medium tabular-nums">{{ money(t.amount, t.currency) }}</div>
+              <div class="text-xs text-muted">{{ t.count }} post{{ t.count === 1 ? '' : 'er' }} på regningen — tryk for at se dem</div>
             </div>
-            <UButton size="sm" icon="i-lucide-check" label="Betal" @click="openSettle(String(c), t.amount)" />
+            <UButton size="sm" icon="i-lucide-check" label="Betal" @click.stop="openSettle(t)" />
           </div>
         </div>
       </div>
@@ -507,7 +569,62 @@ const splitShort = (e: any) => {
       </div>
     </section>
 
-    <UModal v-model:open="settleOpen" title="Hotelregningen er betalt">
+    <UModal v-model:open="billOpen" :title="bill?.name ? `Regning · ${bill.name}` : 'Åben hotelregning'">
+      <template #body>
+        <div v-if="bill" class="space-y-3">
+          <p class="text-sm text-muted">Hold posterne op mod hotellets udskrift, og kryds af. Beløb er inkl. drikkepenge skrevet på regningen.</p>
+          <div class="divide-y divide-default rounded-lg border border-default">
+            <div v-for="r in billRows" :key="r.id" class="flex items-center gap-2 px-3 py-2">
+              <button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" @click="tick(r.id)">
+                <UIcon :name="ticked.has(r.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'" class="size-5 shrink-0" :class="ticked.has(r.id) ? 'text-primary' : 'text-muted'" />
+                <div class="min-w-0 flex-1">
+                  <div class="truncate text-sm" :class="ticked.has(r.id) ? 'text-muted' : 'font-medium'">{{ rowTitle(r) }}</div>
+                  <div class="text-xs text-muted">{{ dm(r.occurred_at) }}<template v-if="r.tip"> · {{ r.tip_cash ? `${money(r.tip, r.currency)} drikkepenge givet kontant — ikke med` : `inkl. ${money(r.tip, r.currency)} drikkepenge` }}</template></div>
+                </div>
+              </button>
+              <UInput v-if="editing === r.id" v-model="editVal" inputmode="decimal" size="sm" class="w-24" autofocus :ui="{ base: 'text-right tabular-nums' }"
+                @keydown.enter.prevent="saveRow(r)" @blur="saveRow(r)" />
+              <button v-else type="button" class="rounded-md px-1.5 py-1 text-sm tabular-nums underline decoration-dotted underline-offset-4"
+                :class="r.kind === 'credit' ? 'text-success' : ''" :aria-label="`Ret beløb for ${rowTitle(r)}`" @click="editRow(r)">{{ money(onBill(r), r.currency) }}</button>
+              <UButton :to="`/p/${id}/e/${r.id}`" icon="i-lucide-chevron-right" size="xs" variant="ghost" color="neutral" square aria-label="Åbn posten" />
+            </div>
+          </div>
+          <p class="text-xs text-muted">Tryk på et beløb for at rette det. Hører en post ikke til her, så åbn den og vælg et andet hotel eller “Kort”.</p>
+          <form class="flex items-center gap-2" @submit.prevent="addMissing">
+            <UInput v-model="nl.description" placeholder="Manglende post" size="sm" class="min-w-0 flex-1" />
+            <UInput v-model="nl.amount" inputmode="decimal" placeholder="Beløb" size="sm" class="w-24" :ui="{ base: 'text-right tabular-nums' }" />
+            <UButton type="submit" icon="i-lucide-plus" size="sm" square aria-label="Tilføj post" :disabled="!parseAmount(nl.amount)" />
+          </form>
+          <p class="-mt-2 text-xs text-muted">Minus foran = rabat/credit på regningen.</p>
+          <div class="space-y-1 text-sm tabular-nums">
+            <div class="flex justify-between font-medium"><span>I alt</span><span>{{ money(bill.amount, bill.currency) }}</span></div>
+            <div class="flex justify-between text-xs text-muted"><span>Krydset af</span><span>{{ billTicked }} af {{ billRows.length }}</span></div>
+            <template v-if="bill.deposit">
+              <div class="flex justify-between text-muted"><span>Depositum</span><span>−{{ money(bill.deposit, bill.currency) }}</span></div>
+              <div v-if="bill.amount >= bill.deposit" class="flex justify-between font-medium"><span>Rest at betale</span><span>{{ money(bill.amount - bill.deposit, bill.currency) }}</span></div>
+              <div v-else class="flex justify-between font-medium text-success"><span>Kommer retur</span><span>{{ money(bill.deposit - bill.amount, bill.currency) }}</span></div>
+            </template>
+          </div>
+          <div class="rounded-lg bg-elevated p-3 text-sm">
+            <UFormField label="Hotellets total" help="Skriv beløbet fra hotellets udskrift for at se forskellen">
+              <UInput v-model="hotelTotal" inputmode="decimal" :placeholder="money(bill.amount, bill.currency)" class="w-full" :ui="{ base: 'tabular-nums' }" />
+            </UFormField>
+            <div v-if="hotelTotal.trim()" class="mt-2">
+              <p v-if="Math.abs(billDiff) < 0.005" class="flex items-center gap-1 text-success"><UIcon name="i-lucide-check" class="size-4" /> Stemmer</p>
+              <template v-else>
+                <p class="tabular-nums">Forskel <b>{{ billDiff > 0 ? '+' : '−' }}{{ money(Math.abs(billDiff), bill.currency) }}</b>
+                  <span class="text-muted"> — {{ billDiff > 0 ? 'hotellet har mere end os' : 'hotellet har mindre end os' }}</span></p>
+                <p class="mt-1 text-xs text-muted">Find helst posten først. Kan den ikke findes, så bogfør forskellen, så regnskabet passer.</p>
+                <UButton class="mt-2" size="sm" variant="soft" icon="i-lucide-scale" :label="`Bogfør forskellen (${billDiff > 0 ? '+' : '−'}${money(Math.abs(billDiff), bill.currency)})`" @click="bookDiff" />
+              </template>
+            </div>
+          </div>
+          <UButton block size="lg" icon="i-lucide-check" label="Betal regningen" @click="openSettle(bill)" />
+        </div>
+      </template>
+    </UModal>
+
+    <UModal v-model:open="settleOpen" :title="st.name ? `${st.name} er betalt` : 'Hotelregningen er betalt'">
       <template #body>
         <form class="space-y-4" @submit.prevent="settle">
           <p class="text-sm text-muted">Lukker alle åbne regningsposter ({{ money(st.total, st.currency) }}). Det bliver ikke en ny udgift — maden tæller allerede med.</p>
@@ -639,9 +756,7 @@ const splitShort = (e: any) => {
         <UIcon name="i-lucide-chevron-down" class="size-4" />
       </button>
       <div class="mx-auto flex max-w-xl gap-2">
-        <UDropdownMenu :items="receiptItems" :content="{ side: 'top', align: 'start' }" :ui="{ content: 'min-w-56', item: 'p-3 text-base' }" class="flex-1">
-          <UButton size="xl" block icon="i-lucide-camera" trailing-icon="i-lucide-chevron-up" :loading="uploading" label="Kvittering" />
-        </UDropdownMenu>
+        <UButton size="xl" class="flex-1 justify-center" icon="i-lucide-camera" :loading="uploading" label="Kvittering" @click="snap(null, true)" />
         <UButton size="xl" color="neutral" variant="soft" icon="i-lucide-keyboard" label="Manuel" @click="openQuick()" />
       </div>
     </div>

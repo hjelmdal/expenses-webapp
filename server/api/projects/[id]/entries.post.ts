@@ -14,6 +14,9 @@ export default defineEventHandler(async (event) => {
     occurred_at: new Date().toISOString().slice(0, 10), ...u,
   }
   if (isSpend(row.kind) && !('split' in body)) (row as any).split = defaultSplit(project)
+  // Tilføjet fra et hotels regning: posten hører til det hotel.
+  const stay = loadStays(id).find(s => s.id === Number(body.stay_id))
+  if (stay) (row as any).stay_id = stay.id
   const db = useDb()
   const keys = Object.keys(row)
   const r = db.prepare(`INSERT INTO entries (project_id, created_by, ${keys.join(', ')}) VALUES (?, ?, ${keys.map(() => '?').join(', ')})`)

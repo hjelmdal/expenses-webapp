@@ -39,6 +39,26 @@ const SPLIT_OPTS = [['none', 'Senere'], ['equal', 'Ligeligt'], ['weights', 'Ande
 const setDefaultSplit = (v: string) => run(() => api(`/projects/${id}`, { method: 'PATCH', body: { default_split: v } }))
 const delPerson = (x: any) => confirm(`Fjern ${x.name}? Fordelinger med personen mister den.`) && run(() => api(`/participants/${x.id}`, { method: 'DELETE' }))
 
+// Hoteller: deler hotelregningen op pr. hotel. Forslag ud fra registrerede hotelbookinger
+// (kategori Hotel, ikke på regningen): check-in = postens dato, check-ud = næste hotels check-in.
+const stays = computed<any[]>(() => data.value?.stays || [])
+const dm = (d?: string | null) => d ? `${Number(d.slice(8, 10))}/${Number(d.slice(5, 7))}` : '…'
+const staySuggestions = computed(() => {
+  const known = new Set(stays.value.map(x => x.name.toLowerCase()))
+  const books = (data.value?.entries || [])
+    .filter((e: any) => e.kind === 'expense' && e.category === 'hotel' && e.method !== 'room' && e.merchant && !known.has(e.merchant.toLowerCase()))
+    .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at))
+  const starts = [...books.map((e: any) => e.occurred_at), ...stays.value.map(x => x.check_in)].sort()
+  return books.map((e: any) => ({ name: e.merchant, check_in: e.occurred_at, check_out: starts.find(d => d > e.occurred_at) || null }))
+})
+const newStay = reactive({ name: '', check_in: '', check_out: '' })
+const addStay = (b: any) => run(async () => {
+  await api(`/projects/${id}/stays`, { method: 'POST', body: b })
+  Object.assign(newStay, { name: '', check_in: '', check_out: '' })
+})
+const updateStay = (x: any) => run(() => api(`/stays/${x.id}`, { method: 'PATCH', body: { name: x.name, check_in: x.check_in, check_out: x.check_out } }))
+const delStay = (x: any) => confirm(`Fjern ${x.name}? Posterne bliver, men placeres igen ud fra datoen.`) && run(() => api(`/stays/${x.id}`, { method: 'DELETE' }))
+
 const newMember = ref('')
 const addMember = () => run(async () => { await api(`/projects/${id}/members`, { method: 'POST', body: { email: newMember.value } }); newMember.value = '' })
 const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && run(() => api(`/projects/${id}/members`, { method: 'DELETE', query: { email } }))
@@ -89,6 +109,36 @@ const delMember = (email: string) => confirm(`Fjern adgang for ${email}?`) && ru
         </div>
         <UButton class="mt-3" size="sm" variant="soft" color="neutral" icon="i-lucide-list-checks" label="Fordel eksisterende poster"
           :to="`/p/${id}?select=unsplit`" />
+      </section>
+
+      <section>
+        <h2 class="mb-1 font-medium">Hoteller</h2>
+        <p class="mb-3 text-sm text-muted">Deler hotelregningen op pr. hotel. Poster på regningen placeres efter dato — på skiftedagen hos det hotel, I forlader, indtil regningen er betalt. Kan ændres på den enkelte post.</p>
+        <div class="space-y-3">
+          <div v-for="x in stays" :key="x.id" class="space-y-2 rounded-lg border border-default p-2">
+            <div class="flex items-center gap-2">
+              <UInput v-model="x.name" class="flex-1" @change="updateStay(x)" />
+              <UButton icon="i-lucide-trash-2" variant="ghost" color="neutral" square @click="delStay(x)" />
+            </div>
+            <div class="grid grid-cols-2 gap-2">
+              <UFormField label="Check-in"><UInput v-model="x.check_in" type="date" class="w-full" @change="updateStay(x)" /></UFormField>
+              <UFormField label="Check-ud"><UInput v-model="x.check_out" type="date" class="w-full" @change="updateStay(x)" /></UFormField>
+            </div>
+            <p v-if="x.settled_at" class="text-xs text-muted">Regningen betalt {{ dm(x.settled_at) }}</p>
+          </div>
+          <div v-if="staySuggestions.length" class="flex flex-wrap gap-1.5">
+            <UButton v-for="g in staySuggestions" :key="g.name + g.check_in" size="sm" variant="soft" icon="i-lucide-plus"
+              :label="`${g.name} · ${dm(g.check_in)}–${dm(g.check_out)}`" @click="addStay(g)" />
+          </div>
+          <form class="space-y-2" @submit.prevent="addStay(newStay)">
+            <UInput v-model="newStay.name" placeholder="Hotel" class="w-full" />
+            <div class="grid grid-cols-2 gap-2">
+              <UFormField label="Check-in"><UInput v-model="newStay.check_in" type="date" class="w-full" /></UFormField>
+              <UFormField label="Check-ud"><UInput v-model="newStay.check_out" type="date" class="w-full" /></UFormField>
+            </div>
+            <UButton type="submit" size="sm" icon="i-lucide-plus" label="Tilføj hotel" :disabled="!newStay.name.trim() || !newStay.check_in" />
+          </form>
+        </div>
       </section>
 
       <section>

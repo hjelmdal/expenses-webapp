@@ -105,6 +105,17 @@ function migrate(d: DatabaseSync) {
   add('refunded', 'REAL NOT NULL DEFAULT 0')        // depositum: beløb der er kommet retur (fuldt ved "fået tilbage", rest ved modregning)
   add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
   add('category', 'TEXT')                          // se shared/utils/categories.ts; NULL = ikke kategoriseret endnu
+  add('stay_id', 'INTEGER')                         // hotel (stays.id) for regningsposter/depositum; NULL = foreslås ud fra datoen
+  // Hotelophold: deler hotelregningen op pr. hotel. Regningsposter og depositum
+  // placeres ud fra datoen (server/utils/stays.ts), medmindre posten har et stay_id.
+  d.exec(`CREATE TABLE IF NOT EXISTS stays (
+    id INTEGER PRIMARY KEY,
+    project_id INTEGER NOT NULL REFERENCES projects(id) ON DELETE CASCADE,
+    name TEXT NOT NULL,
+    check_in TEXT NOT NULL,                        -- YYYY-MM-DD
+    check_out TEXT,                                -- YYYY-MM-DD; NULL = åbent
+    settled_at TEXT                                -- regningen betalt (checket ud)
+  )`)
   // Turens standardfordeling for nye udgifter: NULL (senere) | equal | weights (deltagernes vægte).
   const pcols = new Set((d.prepare('PRAGMA table_info(projects)').all() as any[]).map(c => c.name))
   if (!pcols.has('default_split')) d.exec('ALTER TABLE projects ADD COLUMN default_split TEXT')
