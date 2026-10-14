@@ -6,12 +6,18 @@ export default defineEventHandler(async (event) => {
   const ct = getHeader(event, 'content-type') || ''
   const parts = ct.includes('multipart') ? await readMultipartFormData(event) : undefined
   const body = parts ? fields(parts) : (await readBody<any>(event)) || {}
+  // Sendt igen fra telefonens udbakke, efter at svaret gik tabt: posten findes allerede.
+  const clientId = String(body.client_id || '').slice(0, 64) || null
+  if (clientId) {
+    const dup = useDb().prepare('SELECT id FROM entries WHERE project_id = ? AND client_id = ?').get(id, clientId) as any
+    if (dup) return { id: dup.id }
+  }
   const hasImages = !!parts?.some(p => p.name === 'images' && p.data?.length)
   const u = entryPatch(body, participantIds(id))
   if (!hasImages && u.amount == null) throw createError({ statusCode: 400, statusMessage: 'Angiv et beløb eller tag et billede' })
   const row = {
     kind: 'expense', method: 'card', currency: project.currency,
-    occurred_at: new Date().toISOString().slice(0, 10), ...u,
+    occurred_at: new Date().toISOString().slice(0, 10), ...u, client_id: clientId,
   }
   if (isSpend(row.kind) && !('split' in body)) (row as any).split = defaultSplit(project)
   // Tilføjet fra et hotels regning: posten hører til det hotel.

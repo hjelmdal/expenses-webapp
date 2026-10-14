@@ -66,10 +66,16 @@ async function addImages(ev: Event) {
   if (!input.files?.length) return
   uploading.value = true
   try {
+    // Billederne gemmes i udbakken på telefonen før afsendelse (se composables/outbox.ts).
+    const blobs = await Promise.all(Array.from(input.files).map(f => shrinkImage(f)))
+    input.value = ''
+    await useOutbox().add({ type: 'attach', projectId: pid, entryId: eid, files: blobs })
     await save(false)
-    await api(`/entries/${eid}/attachments`, { method: 'POST', body: await imagesForm(input.files) })
-    await refresh()
-  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { uploading.value = false; input.value = '' }
+  } catch (e: any) {
+    toast.add(e?.queued
+      ? { title: 'Gemt på telefonen', description: 'Ingen forbindelse til serveren — sendes automatisk, så snart der er net.', color: 'warning', icon: 'i-lucide-cloud-off' }
+      : { title: errMsg(e), color: 'error' })
+  } finally { uploading.value = false; input.value = '' }
 }
 async function delImage(aid: number) {
   if (!confirm('Fjern billedet?')) return

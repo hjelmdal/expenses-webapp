@@ -105,6 +105,8 @@ function migrate(d: DatabaseSync) {
   add('refunded', 'REAL NOT NULL DEFAULT 0')        // depositum: beløb der er kommet retur (fuldt ved "fået tilbage", rest ved modregning)
   add('service', 'REAL NOT NULL DEFAULT 0')         // service charge (stedets valg) — adskilt fra tip (vores valg); del af amount
   add('category', 'TEXT')                          // se shared/utils/categories.ts; NULL = ikke kategoriseret endnu
+  add('client_id', 'TEXT')                         // telefonens id for posten (udbakken) — et nyt forsøg giver ikke en dobbeltpost
+  d.exec('CREATE UNIQUE INDEX IF NOT EXISTS entries_client ON entries(project_id, client_id) WHERE client_id IS NOT NULL')
   add('stay_id', 'INTEGER')                         // hotel (stays.id) for regningsposter/depositum; NULL = foreslås ud fra datoen
   // Hotelophold: deler hotelregningen op pr. hotel. Regningsposter og depositum
   // placeres ud fra datoen (server/utils/stays.ts), medmindre posten har et stay_id.

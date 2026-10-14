@@ -60,10 +60,3 @@ export async function shrinkImage(file: File, max = 2000): Promise<Blob> {
     return blob || file
   } catch { return file }
 }
-
-export async function imagesForm(files: FileList | File[], extra: Record<string, any> = {}) {
-  const fd = new FormData()
-  for (const f of Array.from(files)) fd.append('images', await shrinkImage(f), 'kvittering.jpg')
-  for (const [k, v] of Object.entries(extra)) if (v != null) fd.append(k, String(v))
-  return fd
-}

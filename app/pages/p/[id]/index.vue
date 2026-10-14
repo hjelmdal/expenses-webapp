@@ -119,7 +119,6 @@ async function saveBulk() {
 }
 
 // --- Foto: ét tryk = ny post, gemt med det samme og aflæst i baggrunden.
-const camera = ref<HTMLInputElement>()
 const library = ref<HTMLInputElement>()
 const addTo = ref<number | null>(null)   // post der skal have flere billeder
 const uploading = ref(false)
@@ -144,34 +143,54 @@ onMounted(() => { const v = localStorage.getItem(methodKey); if (v && ['card', '
 watch(defMethod, v => localStorage.setItem(methodKey, v))
 const METHOD_LABEL: Record<string, string> = { card: 'Kort', cash: 'Kontant', room: 'Regning' }
 
-function snap(target: number | null = null, fromLibrary = false) {
+// Filvælgeren uden "capture": telefonen tilbyder selv kamera, fotos og filer.
+function snap(target: number | null = null) {
   addTo.value = target
-  ;(fromLibrary ? library : camera).value?.click()
+  library.value?.click()
 }
 
-// Kvittering-knappen bruger filvælgeren uden "capture": telefonen tilbyder selv
-// kamera, fotos og filer i ét tryk.
+// Billederne formindskes og gemmes i udbakken på telefonen, før de sendes. Først når
+// serveren har svaret OK, slettes de lokalt — svigter nettet, sendes de igen automatisk.
+const outbox = useOutbox()
 async function onFiles(ev: Event) {
   const input = ev.target as HTMLInputElement
-  const files = input.files
-  if (!files?.length) return
+  const files = Array.from(input.files || [])
+  if (!files.length) return
   uploading.value = true
+  const target = addTo.value
   try {
-    if (addTo.value) {
-      await api(`/entries/${addTo.value}/attachments`, { method: 'POST', body: await imagesForm(files) })
+    const blobs = await Promise.all(files.map(f => shrinkImage(f)))
+    input.value = ''
+    if (target) {
+      await outbox.add({ type: 'attach', projectId: id, entryId: target, files: blobs })
       toast.add({ title: 'Billede tilføjet — aflæser igen', color: 'success' })
     } else {
-      const r = await api<{ id: number }>(`/projects/${id}/entries`, {
-        method: 'POST', body: await imagesForm(files, { occurred_at: localDate(), paid_by: payer.value, method: defMethod.value }),
-      })
+      const r = await outbox.add({ type: 'photo', projectId: id, files: blobs, fields: { occurred_at: localDate(), paid_by: payer.value, method: defMethod.value } })
       lastPhoto.value = r.id
       toast.add({ title: 'Gemt — aflæser kvitteringen…', color: 'success' })
     }
     await refresh()
-  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally {
+  } catch (e: any) {
+    toast.add(e?.queued ? QUEUED_TOAST : { title: errMsg(e), color: 'error' })
+  } finally {
     uploading.value = false
     input.value = ''
   }
+}
+const QUEUED_TOAST = { title: 'Gemt på telefonen', description: 'Ingen forbindelse til serveren — sendes automatisk, så snart der er net.', color: 'warning' as const, icon: 'i-lucide-cloud-off' }
+// Sendt fra udbakken (fx efter at nettet kom tilbage): vis de nye poster.
+watch(outbox.sentCount, () => refresh())
+const outboxPending = computed(() => outbox.pending.value.filter(x => x.projectId === id))
+const outboxThumbs = ref<string[]>([])
+watch(outboxPending, (items, _, onCleanup) => {
+  const urls = items.flatMap(x => (x.files || []).slice(0, 1)).slice(0, 4).map(b => URL.createObjectURL(b))
+  outboxThumbs.value = urls
+  onCleanup(() => urls.forEach(u => URL.revokeObjectURL(u)))
+}, { immediate: true })
+const outboxLabel = (x: any) => x.type === 'entry' ? `${money(parseAmount(x.body?.amount), x.body?.currency || '')}${x.body?.description ? ` · ${x.body.description}` : ''}`
+  : x.type === 'payment' ? 'Betaling' : x.type === 'attach' ? 'Ekstra billede' : 'Kvittering'
+async function discardOutbox(x: any) {
+  if (confirm('Slet den ventende post fra telefonen? Den er ikke sendt.')) await outbox.remove(x.id)
 }
 
 // --- Hotelregning: afregn alle åbne regningsposter på én gang
@@ -329,13 +348,19 @@ const savingQuick = ref(false)
 async function saveQuick() {
   savingQuick.value = true
   try {
-    const r = await api<{ id: number }>(`/projects/${id}/entries`, { method: 'POST', body: { ...q, ...quickAmounts(), paid_by: q.kind === 'withdrawal' ? null : payer.value } })
-    if (q.kind === 'expense' && q.method === 'later' && Number(String(q.paid_now).replace(',', '.')) > 0) {
-      await api(`/entries/${r.id}/payments`, { method: 'POST', body: { amount: q.paid_now, method: q.paid_method, paid_by: payer.value, date: q.occurred_at } })
+    // Via udbakken: posten ligger på telefonen, til serveren har den.
+    const body = { ...q, ...quickAmounts(), paid_by: q.kind === 'withdrawal' ? null : payer.value }
+    const payment = q.kind === 'expense' && q.method === 'later' && parseAmount(q.paid_now) > 0
+      ? { amount: q.paid_now, method: q.paid_method, paid_by: payer.value, date: q.occurred_at } : null
+    try {
+      await outbox.add({ type: 'entry', projectId: id, body, payment })
+      quick.value = false
+      await refresh()
+    } catch (e: any) {
+      // Ligger den i udbakken, kan formularen lukkes; ellers bliver den stående til rettelse.
+      if (e?.queued) { quick.value = false; toast.add(QUEUED_TOAST) } else toast.add({ title: errMsg(e), color: 'error' })
     }
-    quick.value = false
-    await refresh()
-  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { savingQuick.value = false }
+  } finally { savingQuick.value = false }
 }
 
 const base = computed(() => p.value?.base_currency || 'DKK')
@@ -390,6 +415,23 @@ const splitShort = (e: any) => {
         <UButton :to="`/p/${id}/settings`" icon="i-lucide-settings" variant="ghost" color="neutral" square />
       </div>
     </header>
+
+    <!-- Udbakke: gemt på telefonen, ikke sendt endnu -->
+    <div v-if="outboxPending.length" class="mx-4 mt-4 rounded-xl border border-warning/50 bg-warning/5 p-3 text-sm">
+      <div class="flex items-center gap-2">
+        <UIcon name="i-lucide-cloud-off" class="size-4 shrink-0 text-warning" />
+        <span class="flex-1 font-medium">{{ outboxPending.length }} venter på at blive sendt</span>
+        <UButton size="xs" icon="i-lucide-refresh-cw" label="Send nu" @click="outbox.flush(true)" />
+      </div>
+      <p class="mt-1 text-xs text-muted">Gemt på telefonen og sendes automatisk, når der er forbindelse. Luk gerne appen — de bliver liggende.</p>
+      <div v-if="outboxThumbs.length" class="mt-2 flex gap-2">
+        <img v-for="u in outboxThumbs" :key="u" :src="u" class="h-14 w-10 rounded border border-default object-cover">
+      </div>
+      <div v-for="x in outboxPending" :key="x.id" class="mt-2 flex items-center gap-2 text-xs">
+        <span class="min-w-0 flex-1 truncate">{{ outboxLabel(x) }}<span v-if="x.error" class="text-muted"> · {{ x.stuck ? 'afvist: ' : '' }}{{ x.error }}</span></span>
+        <UButton size="xs" icon="i-lucide-trash-2" variant="ghost" color="neutral" square aria-label="Slet fra telefonen" @click="discardOutbox(x)" />
+      </div>
+    </div>
 
     <!-- Overblik -->
     <section class="space-y-3 p-4">
@@ -733,7 +775,6 @@ const splitShort = (e: any) => {
         </div>
       </template>
     </UModal>
-    <input ref="camera" type="file" accept="image/*" capture="environment" class="hidden" @change="onFiles">
     <input ref="library" type="file" accept="image/*" multiple class="hidden" @change="onFiles">
     <div v-if="selecting" class="fixed inset-x-0 bottom-0 z-20 border-t border-default bg-default/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
       <div class="mx-auto flex max-w-xl gap-2">
@@ -756,7 +797,7 @@ const splitShort = (e: any) => {
         <UIcon name="i-lucide-chevron-down" class="size-4" />
       </button>
       <div class="mx-auto flex max-w-xl gap-2">
-        <UButton size="xl" class="flex-1 justify-center" icon="i-lucide-camera" :loading="uploading" label="Kvittering" @click="snap(null, true)" />
+        <UButton size="xl" class="flex-1 justify-center" icon="i-lucide-camera" :loading="uploading" label="Kvittering" @click="snap()" />
         <UButton size="xl" color="neutral" variant="soft" icon="i-lucide-keyboard" label="Manuel" @click="openQuick()" />
       </div>
     </div>

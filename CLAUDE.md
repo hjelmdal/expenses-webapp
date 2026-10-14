@@ -22,6 +22,12 @@ input skal være lynhurtigt (foto eller beløb), alt andet kan ordnes bagefter.
   kontantkurs (sum af hævningers DKK / THB) for kontantposter → ECB-markedskurs (frankfurter.dev,
   cachet pr. dag i `rates`).
 
+## Udbakke (aldrig miste en kvittering)
+Nye kvitteringer, ekstra billeder og manuelle poster gemmes i telefonens IndexedDB (`app/composables/outbox.ts`)
+FØR de sendes, og slettes først ved et OK fra serveren. Svigter nettet, sendes de igen automatisk
+(`app/plugins/outbox.client.ts`), og forsiden viser "N venter på at blive sendt". Serveren genkender
+en post på `client_id`, så et nyt forsøg efter et tabt svar ikke giver en dobbeltpost.
+
 ## Kvitteringsaflæsning
 `server/utils/receipt.ts` kører den lokale **`claude -p --model sonnet --allowedTools Read`** på
 billederne — ingen API-nøgle. Posten gemmes FØR aflæsning (status `reading`), én ad gangen,
