@@ -73,7 +73,7 @@ async function addImages(ev: Event) {
     await save(false)
   } catch (e: any) {
     toast.add(e?.queued
-      ? { title: 'Gemt på telefonen', description: 'Ingen forbindelse til serveren — sendes automatisk, så snart der er net.', color: 'warning', icon: 'i-lucide-cloud-off' }
+      ? { title: 'Gemt på telefonen', description: 'Serveren svarede ikke — sendes automatisk, så snart den gør.', color: 'warning', icon: 'i-lucide-cloud-off' }
       : { title: errMsg(e), color: 'error' })
   } finally { uploading.value = false; input.value = '' }
 }

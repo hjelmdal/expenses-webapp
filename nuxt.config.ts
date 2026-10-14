@@ -1,4 +1,6 @@
 import { execSync } from 'node:child_process'
+import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
+import { join, relative } from 'node:path'
 
 const isDev = process.argv.includes('dev')
 // Version = 1.<antal commits>, regnet ved build — tæller selv op for hvert commit, der
@@ -21,6 +23,23 @@ export default defineNuxtConfig({
   // med manager'ens dev-server og vælter den — det fik dev-PWA'en til at genindlæse.
   buildDir: process.env.EXPENSES_BUILD_DIR || '.nuxt',
   devtools: { enabled: false },
+  // Ikonerne bundtes i appen, så de også vises offline (ellers hentes de fra serveren).
+  icon: { clientBundle: { scan: true } },
+  // Testserverens prod-build lægges i sin egen mappe, så den ikke overskriver prods .output.
+  nitro: process.env.EXPENSES_OUTPUT_DIR ? { output: { dir: process.env.EXPENSES_OUTPUT_DIR } } : {},
+  // Service workeren må ikke caches (heller ikke af Cloudflare), ellers kommer en ny version først sent ud.
+  routeRules: { '/sw.js': { headers: { 'cache-control': 'no-cache' } } },
+  hooks: {
+    // Service worker (sw/sw.js) får versionen og listen over byggede filer, så appen kan åbne
+    // uden net. Kun ved build — dev har ingen service worker.
+    'nitro:build:public-assets'(nitro) {
+      const dir = nitro.options.output.publicDir
+      const files = ['_nuxt', 'brand'].flatMap(d => readdirSync(join(dir, d), { recursive: true, withFileTypes: true })
+        .filter(f => f.isFile()).map(f => '/' + relative(dir, join(f.parentPath, f.name))))
+      const sw = readFileSync('sw/sw.js', 'utf8').replace('__VERSION__', version).replace('__ASSETS__', JSON.stringify(files))
+      writeFileSync(join(dir, 'sw.js'), sw)
+    },
+  },
   app: {
     head: {
       title: 'Udlæg',

@@ -28,6 +28,12 @@ FØR de sendes, og slettes først ved et OK fra serveren. Svigter nettet, sendes
 (`app/plugins/outbox.client.ts`), og forsiden viser "N venter på at blive sendt". Serveren genkender
 en post på `client_id`, så et nyt forsøg efter et tabt svar ikke giver en dobbeltpost.
 
+**Offline:** en service worker (`sw/sw.js`, bygges til `.output/public/sw.js` med version og fil-liste af
+hooket i `nuxt.config.ts`) gør, at appen åbner uden net: sider og `/_nuxt/` fra cachen, GET `/api/` net
+først og ellers sidst hentede svar (`x-offline-cache`), som `NetBanner` viser som "Offline · data fra kl. …".
+Udløbet Access-login (redirect/401/403) giver "Log ind igen", og udbakken venter i stedet for at droppe
+posten. Kun i det byggede prod — dev har ingen service worker. Rettelser kræver stadig net.
+
 ## Kvitteringsaflæsning
 `server/utils/receipt.ts` kører den lokale **`claude -p --model sonnet --allowedTools Read`** på
 billederne — ingen API-nøgle. Posten gemmes FØR aflæsning (status `reading`), én ad gangen,

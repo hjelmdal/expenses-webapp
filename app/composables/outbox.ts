@@ -57,29 +57,32 @@ function form(files: Blob[], extra: Record<string, any>) {
   return fd
 }
 
-// Sender én post. Returnerer serverens svar; kaster ved fejl.
+// Sender én post. Returnerer serverens svar; kaster ved fejl. API'et redirecter aldrig — et
+// redirect er Access, der vil have et nyt login, og må ikke tælle som "sendt".
+const post = <T = any>(path: string, opts: any) => api<T>(path, { ...opts, redirect: 'error' })
 async function send(item: OutboxItem): Promise<any> {
   if (item.type === 'photo') {
-    return api(`/projects/${item.projectId}/entries`, { method: 'POST', body: form(item.files || [], { ...item.fields, client_id: item.id }) })
+    return post(`/projects/${item.projectId}/entries`, { method: 'POST', body: form(item.files || [], { ...item.fields, client_id: item.id }) })
   }
   if (item.type === 'attach') {
-    return api(`/entries/${item.entryId}/attachments`, { method: 'POST', body: form(item.files || [], {}) })
+    return post(`/entries/${item.entryId}/attachments`, { method: 'POST', body: form(item.files || [], {}) })
   }
   if (item.type === 'payment') {
-    await api(`/entries/${item.entryId}/payments`, { method: 'POST', body: item.payment })
+    await post(`/entries/${item.entryId}/payments`, { method: 'POST', body: item.payment })
     return { id: item.entryId }
   }
-  const r = await api<{ id: number }>(`/projects/${item.projectId}/entries`, { method: 'POST', body: { ...item.body, client_id: item.id } })
+  const r = await post<{ id: number }>(`/projects/${item.projectId}/entries`, { method: 'POST', body: { ...item.body, client_id: item.id } })
   if (item.payment) {
     // Posten er oprettet: husk det, så et nyt forsøg kun sender betalingen.
     await tx('readwrite', s => s.put({ ...item, type: 'payment', entryId: r.id, body: undefined }))
-    await api(`/entries/${r.id}/payments`, { method: 'POST', body: item.payment })
+    await post(`/entries/${r.id}/payments`, { method: 'POST', body: item.payment })
   }
   return r
 }
 
-// Serveren svarede med en klientfejl (4xx): et nyt forsøg hjælper ikke.
-const rejected = (e: any) => { const st = e?.response?.status ?? e?.statusCode; return st >= 400 && st < 500 && st !== 408 && st !== 429 }
+// Serveren svarede med en klientfejl (4xx): et nyt forsøg hjælper ikke. Undtagen login
+// (401/403 — Access-sessionen er udløbet): så venter posten, til man har logget ind igen.
+const rejected = (e: any) => { const st = e?.response?.status ?? e?.statusCode; return st >= 400 && st < 500 && ![401, 403, 408, 429].includes(st) }
 
 async function attempt(item: OutboxItem) {
   if (inflight.has(item.id)) throw new Error('Sendes allerede')
@@ -91,7 +94,8 @@ async function attempt(item: OutboxItem) {
     return r
   } catch (e: any) {
     const latest = (await tx<OutboxItem | undefined>('readonly', s => s.get(item.id))) || item
-    const error = e?.response ? errMsg(e) : 'ingen forbindelse'
+    const st = e?.response?.status
+    const error = st === 401 || st === 403 || (!e?.response && await probeLogin()) ? 'log ind igen' : e?.response ? errMsg(e) : 'ingen forbindelse'
     await tx('readwrite', s => s.put({ ...latest, tries: latest.tries + 1, error, stuck: rejected(e) }))
     throw e
   } finally { inflight.delete(item.id); await reload() }

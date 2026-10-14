@@ -1,7 +1,12 @@
 // Alle kald går relativt til appens base-URL (rod på egen host, /<id>/ på sti).
 export function api<T = any>(path: string, opts: any = {}) {
   const base = useRuntimeConfig().app.baseURL.replace(/\/$/, '')
-  return $fetch<T>(`${base}/api${path}`, opts)
+  const { onResponse, onRequestError } = opts
+  return $fetch<T>(`${base}/api${path}`, {
+    ...opts,
+    onResponse(ctx: any) { noteResponse(ctx.response); return onResponse?.(ctx) },
+    onRequestError(ctx: any) { noteNoResponse(); return onRequestError?.(ctx) },
+  })
 }
 
 export function attUrl(id: number) {
@@ -9,6 +14,8 @@ export function attUrl(id: number) {
 }
 
 export function errMsg(e: any) {
+  // Intet svar (offline, hotel-wifi): Safari siger bare "Load failed".
+  if (e?.name === 'FetchError' && !e.response) return 'Ingen forbindelse — prøv igen, når der er net'
   return e?.data?.statusMessage || e?.statusMessage || e?.message || 'Noget gik galt'
 }
 

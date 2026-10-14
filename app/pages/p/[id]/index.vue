@@ -177,7 +177,7 @@ async function onFiles(ev: Event) {
     input.value = ''
   }
 }
-const QUEUED_TOAST = { title: 'Gemt på telefonen', description: 'Ingen forbindelse til serveren — sendes automatisk, så snart der er net.', color: 'warning' as const, icon: 'i-lucide-cloud-off' }
+const QUEUED_TOAST = { title: 'Gemt på telefonen', description: 'Serveren svarede ikke — sendes automatisk, så snart den gør.', color: 'warning' as const, icon: 'i-lucide-cloud-off' }
 // Sendt fra udbakken (fx efter at nettet kom tilbage): vis de nye poster.
 watch(outbox.sentCount, () => refresh())
 const outboxPending = computed(() => outbox.pending.value.filter(x => x.projectId === id))
