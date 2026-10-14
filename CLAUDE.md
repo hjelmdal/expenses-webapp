@@ -33,6 +33,8 @@ hooket i `nuxt.config.ts`) gør, at appen åbner uden net: sider og `/_nuxt/` fr
 først og ellers sidst hentede svar (`x-offline-cache`), som `NetBanner` viser som "Offline · data fra kl. …".
 Udløbet Access-login (redirect/401/403) giver "Log ind igen", og udbakken venter i stedet for at droppe
 posten. Kun i det byggede prod — dev har ingen service worker. Rettelser kræver stadig net.
+Aktive ture gemmes helt på telefonen i baggrunden (`app/composables/offline.ts`): ændrede poster og
+alle kvitteringsbilleder hentes, når turen er hentet med net; arkiverede ture ryddes væk igen.
 
 ## Kvitteringsaflæsning
 `server/utils/receipt.ts` kører den lokale **`claude -p --model sonnet --allowedTools Read`** på

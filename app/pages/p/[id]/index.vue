@@ -5,6 +5,9 @@ const id = Number(route.params.id)
 const { data, refresh, error } = await useAsyncData(`p-${id}`, () => api<any>(`/projects/${id}`))
 const p = computed(() => data.value?.project)
 const s = computed(() => data.value?.summary)
+// Hele turen (poster og billeder) gemmes på telefonen i baggrunden, når der er net.
+const { offlineSince } = useNet()
+watch(data, d => { if (d && !offlineSince.value) keepTripOffline(id, d) }, { immediate: true })
 
 // "Start her": appen åbner på denne tur på denne enhed. Findes turen ikke (længere), glemmes
 // valget, og man sendes til listen i stedet for at stå på en tom side.

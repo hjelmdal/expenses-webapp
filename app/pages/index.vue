@@ -1,6 +1,9 @@
 <script setup lang="ts">
 const toast = useToast()
 const { data: projects, refresh } = await useAsyncData('projects', () => api<any[]>('/projects'))
+// Arkiverede ture ryddes væk fra telefonen (composables/offline.ts).
+const { offlineSince } = useNet()
+watch(projects, ps => { if (ps && !offlineSince.value) forgetArchived(ps) }, { immediate: true })
 const open = ref(false)
 const form = reactive({ name: '', currency: 'THB', base_currency: 'DKK', people: 'Far, Mor, Barn 1, Barn 2' })
 const saving = ref(false)
