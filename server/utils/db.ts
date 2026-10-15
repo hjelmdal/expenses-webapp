@@ -108,6 +108,12 @@ function migrate(d: DatabaseSync) {
   add('client_id', 'TEXT')                         // telefonens id for posten (udbakken) — et nyt forsøg giver ikke en dobbeltpost
   d.exec('CREATE UNIQUE INDEX IF NOT EXISTS entries_client ON entries(project_id, client_id) WHERE client_id IS NOT NULL')
   add('stay_id', 'INTEGER')                         // hotel (stays.id) for regningsposter/depositum; NULL = foreslås ud fra datoen
+  // Depositum, der skal afstemmes: "heraf depositum" på en udgift (fx scooterleje), eller hele en
+  // depositum-post. Afstemt = hvor meget kom retur, hvordan og hvornår; resten er modregnet (forbrug).
+  add('deposit', 'REAL NOT NULL DEFAULT 0')         // udgift: heraf depositum (del af amount, ikke forbrug før afstemt)
+  add('deposit_back', 'REAL')                       // afstemt: beløb retur (0 = intet retur); NULL = ikke afstemt
+  add('deposit_back_method', 'TEXT')                // card | cash — kontant retur lægges i pungen
+  add('deposit_back_at', 'TEXT')                    // dato for afstemningen
   // Hotelophold: deler hotelregningen op pr. hotel. Regningsposter og depositum
   // placeres ud fra datoen (server/utils/stays.ts), medmindre posten har et stay_id.
   d.exec(`CREATE TABLE IF NOT EXISTS stays (

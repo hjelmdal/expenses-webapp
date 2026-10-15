@@ -284,19 +284,12 @@ async function settle() {
   } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) }
 }
 
-// --- Depositum retur
-const refundOpen = ref(false)
-const refundCur = ref('')
-const openDeposits = computed(() => (data.value?.entries || []).filter((e: any) => e.kind === 'deposit' && !e.settled_at && e.currency === refundCur.value))
-function openRefund(c: string) { refundCur.value = c; refundOpen.value = true }
-async function refundOne(e: any) {
-  try {
-    await api(`/entries/${e.id}/refund`, { method: 'POST', body: { date: localDate() } })
-    toast.add({ title: e.method === 'cash' ? 'Depositum retur — lagt tilbage i pungen' : 'Depositum frigivet', color: 'success' })
-    await refresh()
-    if (!openDeposits.value.length) refundOpen.value = false
-  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
-}
+// --- Depositum: skal afstemmes (alt/delvist/intet retur), så det ikke glemmes
+const openDeps = computed(() => (data.value?.entries || []).filter((e: any) => e.dep && !e.dep.closed)
+  .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at) || a.id - b.id))
+const depOpen = ref(false)
+const depEntry = ref<any>(null)
+function openDep(e: any) { depEntry.value = e; depOpen.value = true }
 
 // --- Betal rest på en "betales senere"-post
 const payOpen = ref(false)
@@ -384,7 +377,7 @@ const rowMeta = (e: any) => [
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
   e.method === 'room' ? [e.settled_at ? 'regning betalt' : 'på regning', (data.value?.stays || []).find((x: any) => x.id === e.stay)?.name].filter(Boolean).join(' · ') : '',
-  e.kind === 'deposit' ? (!e.settled_at ? (e.method === 'cash' ? 'kontant · ude' : 'reserveret på kort') : e.settled_method === 'refund' ? 'fået tilbage' : 'modregnet') : '',
+  depositText(e),
   e.method === 'later' && e.amount ? (laterRest(e) > 0.004 ? `rest ${money(laterRest(e), e.currency)}` : 'betalt') : '',
   tipText(e),
   splitShort(e),
@@ -485,17 +478,19 @@ const splitShort = (e: any) => {
           <div class="text-muted">Indtægter</div>
           <div class="font-medium tabular-nums">{{ money(s.income, base) }}</div>
         </div>
-        <div v-for="(d, c) in s.deposits" :key="'dep-' + c" class="col-span-2 rounded-xl border border-warning/40 p-3">
-          <div class="flex items-start justify-between gap-2">
-            <div>
-              <div class="flex items-center gap-1.5 text-muted"><UIcon name="i-lucide-lock" class="size-4" /> Depositum ude</div>
-              <div class="text-lg font-medium tabular-nums">{{ money(d.amount, String(c)) }}</div>
-              <div class="text-xs text-muted">
-                <span v-if="d.card">{{ money(d.card, String(c)) }} reserveret på kort</span><span v-if="d.card && d.cash"> · </span><span v-if="d.cash">{{ money(d.cash, String(c)) }} kontant</span>
-                — ikke forbrug
-              </div>
+        <!-- Depositum ude: fremhævet, så det ikke glemmes at afstemme (retur? noget modregnet?) -->
+        <div v-if="openDeps.length" class="col-span-2 rounded-xl border border-warning bg-warning/10 p-3">
+          <div class="flex items-center gap-1.5 font-medium text-warning"><UIcon name="i-lucide-lock" class="size-4" /> Depositum ude — husk at afstemme</div>
+          <p class="mt-0.5 text-xs text-muted">Fik I det hele tilbage, eller blev noget modregnet (skade, forbrug)? Tæller ikke som forbrug, før det er afstemt.</p>
+          <div v-for="d in openDeps" :key="d.id" class="mt-2 flex items-center justify-between gap-2 rounded-lg bg-default px-3 py-2">
+            <div class="min-w-0">
+              <div class="truncate text-sm font-medium">{{ rowTitle(d) }}</div>
+              <div class="text-xs text-muted">{{ dm(d.occurred_at) }} · {{ d.method === 'cash' ? 'betalt kontant' : 'på kort' }}</div>
             </div>
-            <UButton size="sm" variant="soft" color="neutral" label="Fået tilbage" @click="openRefund(String(c))" />
+            <div class="flex shrink-0 items-center gap-2">
+              <span class="text-sm font-medium tabular-nums">{{ money(d.dep.held, d.currency) }}</span>
+              <UButton size="sm" label="Afstem" @click="openDep(d)" />
+            </div>
           </div>
         </div>
         <div v-if="s.due.length" class="col-span-2 rounded-xl border border-default p-3">
@@ -697,23 +692,7 @@ const splitShort = (e: any) => {
       </template>
     </UModal>
 
-    <UModal v-model:open="refundOpen" title="Depositum retur">
-      <template #body>
-        <div class="space-y-2">
-          <p class="text-sm text-muted">Tryk på det depositum, I har fået tilbage. Skal det i stedet bruges til at betale hotelregningen, så brug “Betal” på regningen og modregn det dér.</p>
-          <div v-for="d in openDeposits" :key="d.id" class="flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2">
-            <div class="min-w-0">
-              <div class="truncate text-sm font-medium">{{ rowTitle(d) }}</div>
-              <div class="text-xs text-muted">{{ d.method === 'cash' ? 'kontant — lægges tilbage i pungen' : 'reserveret på kort — frigives' }}</div>
-            </div>
-            <div class="flex items-center gap-2">
-              <span class="text-sm font-medium tabular-nums">{{ money(d.amount, d.currency) }}</span>
-              <UButton size="sm" icon="i-lucide-check" label="Retur" @click="refundOne(d)" />
-            </div>
-          </div>
-        </div>
-      </template>
-    </UModal>
+    <DepositSettle v-model:open="depOpen" :entry="depEntry" :title="depEntry ? rowTitle(depEntry) : ''" @done="refresh()" />
 
     <UModal v-model:open="payOpen" :title="`Betal: ${pay.title}`">
       <template #body>

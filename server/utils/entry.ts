@@ -10,6 +10,7 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   if ('amount' in b) u.amount = numOrNull(b.amount)
   if ('tip' in b) u.tip = numOrNull(b.tip) || 0
   if ('service' in b) u.service = numOrNull(b.service) || 0
+  if ('deposit' in b) u.deposit = Math.max(0, numOrNull(b.deposit) || 0)
   if ('category' in b) u.category = CATEGORY_KEYS.includes(b.category) ? b.category : null
   if ('currency' in b && normCurrency(b.currency)) u.currency = normCurrency(b.currency)
   if ('base_amount' in b) u.base_amount = numOrNull(b.base_amount)
@@ -40,6 +41,11 @@ export function entryPatch(b: Record<string, any>, participantIds: number[]) {
   // amount er inkl. tips — tips større end hele beløbet er en tastefejl (fx tips uden beløb).
   if ('amount' in u && 'tip' in u && u.tip > (u.amount ?? 0) + 0.004) {
     throw createError({ statusCode: 400, statusMessage: 'Drikkepenge kan ikke være større end beløbet i alt' })
+  }
+  // "Heraf depositum" findes kun på udgifter, og kan ikke være mere end regningen (uden drikkepenge).
+  if (u.kind && u.kind !== 'expense') u.deposit = 0
+  if ('amount' in u && u.deposit > (u.amount ?? 0) - (u.tip || 0) + 0.004) {
+    throw createError({ statusCode: 400, statusMessage: 'Depositum kan ikke være større end beløbet' })
   }
   if (u.method && !['room', 'later'].includes(u.method) && u.kind !== 'deposit') { u.settled_at = null; u.settled_method = null }
   return u

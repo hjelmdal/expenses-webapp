@@ -28,6 +28,20 @@ const round2 = (n: number) => Math.round(n * 100) / 100
 // Er posten (ved afregning) betalt med kontanter? Så bruges kontantkursen.
 export const paidInCash = (e: any) => e.method === 'cash' || (e.kind === 'deposit' && e.method === 'cash') || (e.method === 'room' && e.settled_method === 'cash')
 
+// Depositum, der skal afstemmes: hele en depositum-post, eller "heraf depositum" på en udgift.
+// Afstemt: det retur-beløb (kort/kontant) er ikke forbrug, resten er modregnet og er. Et
+// hoteldepositum, der er modregnet i regningen (settled_method 'applied'), er ikke selv forbrug —
+// det er regningens poster. Ældre "fået tilbage" uden retur-felter = det hele, samme vej som betalt.
+export function depositOf(e: any) {
+  const held = e.kind === 'deposit' ? Number(e.amount) || 0 : e.kind === 'expense' ? Number(e.deposit) || 0 : 0
+  if (!(held > 0)) return null
+  const applied = e.kind === 'deposit' && e.settled_method === 'applied'
+  const closed = e.kind === 'deposit' ? !!e.settled_at : !!e.deposit_back_at
+  const back = !closed || applied ? 0 : Number(e.deposit_back ?? e.refunded) || 0
+  const method = e.deposit_back_method || (e.method === 'cash' ? 'cash' : 'card')
+  return { held, closed, applied, back, method, kept: closed && !applied ? round2(held - back) : 0 }
+}
+
 export async function loadLedger(projectId: number) {
   const db = useDb()
   const project = db.prepare('SELECT * FROM projects WHERE id = ?').get(projectId) as any
@@ -61,6 +75,10 @@ export async function loadLedger(projectId: number) {
     else rate = await marketRate(e.currency, base, e.occurred_at)
     const amount = Number(e.amount) || 0
     const split = parseSplit(e.split)
+    // Forbrug: uden det depositum, der kom (eller kommer) retur. En depositum-post er kun
+    // forbrug med det, der blev modregnet.
+    const dep = depositOf(e)
+    const cost = dep ? (e.kind === 'deposit' ? dep.kept : round2(amount - dep.held + dep.kept)) : amount
     entries.push({
       ...e,
       split,
@@ -69,6 +87,9 @@ export async function loadLedger(projectId: number) {
       rate,
       rate_source: rateSource,
       base_value: rate != null ? round2(amount * rate) : null,
+      dep,
+      cost,
+      base_cost: rate != null ? round2(cost * rate) : null,
       base_tip: rate != null ? round2((Number(e.tip) || 0) * rate) : null,
       base_service: rate != null ? round2((Number(e.service) || 0) * rate) : null,
       attachments: atts.filter(a => a.entry_id === e.id).map(a => a.id),
@@ -105,17 +126,22 @@ export async function loadLedger(projectId: number) {
     const sign = spendSign(e.kind)
     if (e.kind === 'withdrawal') { addTo(cashIn, e.currency, amt); continue }
     // Depositum er ikke forbrug: kontant er ude af pungen indtil det kommer retur;
-    // på kort er det kun en reservation. Står åbent indtil "fået tilbage"/modregnet.
-    if (e.kind === 'deposit') {
-      if (e.method === 'cash') addTo(cashOut, e.currency, amt - (Number(e.refunded) || 0))
-      if (!e.settled_at) {
-        depositsOpen.push(e)
+    // på kort er det kun en reservation. Står åbent ("husk at afstemme") indtil afstemt
+    // eller modregnet i hotelregningen. Kontant retur lægges i pungen.
+    const dep = e.dep
+    if (dep) {
+      if (!dep.closed) {
+        if (e.kind === 'deposit') depositsOpen.push(e)
         const d = deposits[e.currency] ||= { amount: 0, cash: 0, card: 0, count: 0 }
-        d.amount += amt; d.count++; e.method === 'cash' ? (d.cash += amt) : (d.card += amt)
-      }
-      continue
+        d.amount += dep.held; d.count++; e.method === 'cash' ? (d.cash += dep.held) : (d.card += dep.held)
+      } else if (dep.back && dep.method === 'cash') addTo(cashIn, e.currency, dep.back)
     }
-    if (e.kind === 'income') { if (e.method === 'cash') addTo(cashIn, e.currency, amt) }
+    if (e.kind === 'deposit') {
+      // Modregnet i hotelregningen: et overskud er kommet retur (refunded).
+      if (e.method === 'cash') addTo(cashOut, e.currency, amt - (dep?.applied ? Number(e.refunded) || 0 : 0))
+      if (!(e.cost > 0)) continue
+    }
+    else if (e.kind === 'income') { if (e.method === 'cash') addTo(cashIn, e.currency, amt) }
     // Rabat i kontanter (penge tilbage) lægges i pungen.
     else if (e.method === 'cash') addTo(e.kind === 'credit' ? cashIn : cashOut, e.currency, amt)
     else {
@@ -129,9 +155,9 @@ export async function loadLedger(projectId: number) {
       }
     }
     if (e.kind === 'income') { income += e.base_value || 0; continue }
-    byCurrency[e.currency] = (byCurrency[e.currency] || 0) + sign * amt
-    if (e.base_value == null) { if (amt) unconverted++; continue }
-    const v = sign * e.base_value
+    byCurrency[e.currency] = (byCurrency[e.currency] || 0) + sign * e.cost
+    if (e.base_cost == null) { if (e.cost) unconverted++; continue }
+    const v = sign * e.base_cost
     spent += v
     byCategory[e.category || 'none'] = (byCategory[e.category || 'none'] || 0) + v
     if (e.kind === 'expense') { tips += e.base_tip || 0; service += e.base_service || 0 }

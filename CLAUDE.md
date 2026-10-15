@@ -18,6 +18,10 @@ input skal være lynhurtigt (foto eller beløb), alt andet kan ordnes bagefter.
 - `stays` (hoteller) deler hotelregningen op: regningsposter og depositum placeres ud fra datoen
   (`server/utils/stays.ts`; skiftedag = hotellet man forlader, indtil dets regning er betalt), eller
   efter `entries.stay_id`, som man kan vælge på posten, og som låses ved betaling.
+- **Depositum** (`depositOf` i `server/utils/ledger.ts`): en depositum-post, eller "heraf depositum"
+  (`entries.deposit`) på en udgift. Ikke forbrug, før det er **afstemt** (`/entries/:id/refund`: retur-beløb,
+  kort/kontant, dato i `deposit_back*`); det modregnede er forbrug, og kontant retur lægges i pungen. Åbne
+  depositummer står fremhævet på forsiden. Et hoteldepositum kan i stedet modregnes i regningen (`applied`).
 - Kurs beregnes ved læsning (`server/utils/ledger.ts`): fast (`base_amount` sat, fx hævning) →
   kontantkurs (sum af hævningers DKK / THB) for kontantposter → ECB-markedskurs (frankfurter.dev,
   cachet pr. dag i `rates`).

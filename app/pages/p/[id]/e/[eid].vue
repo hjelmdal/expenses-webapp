@@ -19,7 +19,7 @@ function load() {
     kind: e.kind, occurred_at: e.occurred_at, merchant: e.merchant || '', description: e.description || '',
     // Tips står oveni: feltet "Beløb" er regningen uden tips; i databasen er amount inkl. tips.
     amount: e.amount == null ? '' : e.kind === 'expense' ? Math.round((e.amount - (e.tip || 0)) * 100) / 100 : e.amount, tip: e.tip || '', service: e.service || '', category: e.category || null, tip_cash: !!e.tip_cash, currency: e.currency, method: e.method,
-    paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '', stay_id: e.stay_id ?? null,
+    paid_by: e.paid_by ?? null, base_amount: e.base_amount ?? '', stay_id: e.stay_id ?? null, deposit: e.deposit || '',
   })
   split.value = e.split || null
 }
@@ -47,7 +47,7 @@ const saving = ref(false)
 async function save(back = true) {
   saving.value = true
   try {
-    await api(`/entries/${eid}`, { method: 'PATCH', body: { ...f, amount: total.value, tip: f.kind === 'expense' ? f.tip : 0, split: split.value } })
+    await api(`/entries/${eid}`, { method: 'PATCH', body: { ...f, amount: total.value, tip: f.kind === 'expense' ? f.tip : 0, deposit: f.kind === 'expense' ? parseAmount(f.deposit) : 0, split: split.value } })
     if (back) await navigateTo(`/p/${pid}`)
     else await refresh()
   } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { saving.value = false }
@@ -90,10 +90,19 @@ async function reread(reset: boolean) {
 }
 const viewing = ref<number | null>(null)
 const e = computed(() => data.value?.entry)
-async function refund() {
+// Depositum (hele posten eller "heraf depositum"): afstem, eller fortryd afstemningen.
+const depOpen = ref(false)
+async function reconcile() {
   await save(false)
-  await api(`/entries/${eid}/refund`, { method: 'POST', body: { date: localDate() } })
   await refresh()
+  if (e.value?.dep) depOpen.value = true
+}
+async function undoDeposit() {
+  if (!confirm('Sæt depositummet tilbage som ikke afstemt?')) return
+  try {
+    await api(`/entries/${eid}/refund`, { method: 'POST', body: { undo: true } })
+    await refresh()
+  } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
 }
 const newPay = reactive({ amount: '', method: 'card' })
 async function addPayment() {
@@ -199,13 +208,15 @@ const rateText = computed(() => {
             :label="x.name" @click="f.stay_id = x.id" />
         </div>
       </UFormField>
-      <!-- Depositum: status og retur -->
-      <div v-if="f.kind === 'deposit' && e.kind === 'deposit'" class="-mt-2 flex items-center justify-between gap-2 rounded-lg bg-elevated px-3 py-2 text-sm">
-        <span v-if="!e.settled_at" class="text-muted">{{ e.method === 'cash' ? 'Kontant — ude af pungen' : 'Reserveret på kort' }}, tæller ikke som forbrug</span>
-        <span v-else-if="e.settled_method === 'refund'">Fået tilbage {{ e.settled_at }}</span>
-        <span v-else>Modregnet i hotelregningen {{ e.settled_at }}<template v-if="e.refunded"> · {{ money(e.refunded, e.currency) }} retur</template></span>
-        <UButton v-if="!e.settled_at" size="xs" icon="i-lucide-check" label="Fået tilbage" @click="refund" />
-        <UButton v-else size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
+      <!-- Depositum: status og afstemning -->
+      <div v-if="f.kind === 'deposit' && e.kind === 'deposit' && e.dep" class="-mt-2 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm"
+        :class="e.dep.closed ? 'bg-elevated' : 'border border-warning bg-warning/10'">
+        <span v-if="!e.dep.closed">{{ e.method === 'cash' ? 'Kontant — ude af pungen' : 'Reserveret på kort' }}, tæller ikke som forbrug — husk at afstemme</span>
+        <span v-else-if="e.dep.applied">Modregnet i hotelregningen {{ e.settled_at }}<template v-if="e.refunded"> · {{ money(e.refunded, e.currency) }} retur</template></span>
+        <span v-else>Afstemt {{ shortDate(e.settled_at) }}: {{ depositText(e) }}</span>
+        <UButton v-if="!e.dep.closed" size="xs" icon="i-lucide-check" label="Afstem" @click="reconcile" />
+        <UButton v-else-if="e.dep.applied" size="xs" variant="ghost" color="neutral" label="Genåbn" @click="reopen" />
+        <UButton v-else size="xs" variant="ghost" color="neutral" label="Fortryd" @click="undoDeposit" />
       </div>
 
       <!-- Betales senere: betalinger -->
@@ -229,6 +240,18 @@ const rateText = computed(() => {
           <UInput v-model="f.service" inputmode="decimal" class="w-full" placeholder="0" />
         </UFormField>
       </div>
+      <!-- Heraf depositum (fx scooterleje): ikke forbrug, før det er afstemt -->
+      <template v-if="f.kind === 'expense'">
+        <UFormField label="Heraf depositum" help="Kommer retur senere — tæller ikke som forbrug, før det er afstemt">
+          <UInput v-model="f.deposit" inputmode="decimal" class="w-full" placeholder="0" />
+        </UFormField>
+        <div v-if="e.dep && parseAmount(f.deposit) === e.dep.held" class="-mt-2 flex items-center justify-between gap-2 rounded-lg px-3 py-2 text-sm"
+          :class="e.dep.closed ? 'bg-elevated' : 'border border-warning bg-warning/10'">
+          <span>{{ e.dep.closed ? `Afstemt ${shortDate(e.deposit_back_at)}: ${depositText(e)}` : 'Ikke afstemt endnu — fik I det tilbage?' }}</span>
+          <UButton v-if="!e.dep.closed" size="xs" icon="i-lucide-check" label="Afstem" @click="reconcile" />
+          <UButton v-else size="xs" variant="ghost" color="neutral" label="Fortryd" @click="undoDeposit" />
+        </div>
+      </template>
 
       <template v-if="isSpend(f.kind) && people.length">
         <UFormField :label="f.kind === 'credit' ? 'Modtaget af' : 'Betalt af'">
@@ -240,7 +263,7 @@ const rateText = computed(() => {
 
         <div class="rounded-xl border border-default p-3">
           <div class="mb-2 text-sm font-medium">Fordeling</div>
-          <SplitEditor v-model="split" :people="people" :base-value="e.base_value" :base="base" />
+          <SplitEditor v-model="split" :people="people" :base-value="e.base_cost" :base="base" />
         </div>
       </template>
     </div>
@@ -248,6 +271,8 @@ const rateText = computed(() => {
     <div class="fixed inset-x-0 bottom-0 z-20 border-t border-default bg-default/95 p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] backdrop-blur">
       <div class="mx-auto max-w-xl"><UButton block size="xl" :loading="saving" label="Gem" @click="save()" /></div>
     </div>
+
+    <DepositSettle v-model:open="depOpen" :entry="e" :title="f.merchant || f.description || 'Depositum'" @done="refresh()" />
 
     <div v-if="viewing" class="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-2" @click="viewing = null">
       <img :src="attUrl(viewing)" class="max-h-full max-w-full object-contain">
