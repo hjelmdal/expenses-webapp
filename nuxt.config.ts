@@ -46,13 +46,23 @@ export default defineNuxtConfig({
       htmlAttrs: { lang: 'da' },
       meta: [
         { name: 'viewport', content: 'width=device-width, initial-scale=1, viewport-fit=cover' },
-        { name: 'theme-color', content: '#ffffff', media: '(prefers-color-scheme: light)' },
-        { name: 'theme-color', content: '#18181b', media: '(prefers-color-scheme: dark)' },
         { name: 'apple-mobile-web-app-capable', content: 'yes' },
         { name: 'apple-mobile-web-app-title', content: 'Udlæg' },
       ],
       // Appen kører altid i roden af sin egen host (dev-expenses / expenses-app),
       // så /brand/ er korrekt her. /brand/* er undtaget fra Access (PWA-ikoner).
+      // Opstartsskærm: kun i den installerede app (en browserfane skal ikke vente på den).
+      // Gaten SKAL køre i <head> før første optegning. ?splash=1 tvinger den frem til test.
+      // Statuslinjen farves efter theme-color. Den sættes HER og ikke i meta nedenfor: Nuxts
+      // head-styring ville ellers overtage splashens ekstra tag ved hydrering og efterlade den
+      // mørke farve i lys tilstand. Så længe splashen vises, står splashens øverste farve
+      // FØRST (det første, der matcher, vinder) — ellers en lys stribe over den mørke splash.
+      // __splashDone() toner ud og giver statuslinjen tilbage. Loft: 3 s. Gulvet: app.vue.
+      script: [{
+        innerHTML: `try{var d=document.documentElement,h=document.head,t=function(c,q){var m=document.createElement('meta');m.name='theme-color';m.content=c;if(q)m.media=q;h.appendChild(m);return m};t('#f5f6f9','(prefers-color-scheme: light)');t('#161a29','(prefers-color-scheme: dark)');if(matchMedia('(display-mode: standalone)').matches||navigator.standalone||/[?&]splash=1/.test(location.search)){d.dataset.pwa='1';var m=t('#0d3245');h.insertBefore(m,h.firstChild);window.__splashDone=function(){d.classList.add('splash-done');m.remove()};setTimeout(window.__splashDone,3000)}}catch(e){}`,
+        tagPosition: 'head',
+      }],
+      style: [{ innerHTML: readFileSync('app/assets/splash.css', 'utf8') }],
       link: [
         { rel: 'icon', href: '/brand/favicon.ico', sizes: 'any' },
         { rel: 'icon', href: '/brand/icon.svg', type: 'image/svg+xml' },

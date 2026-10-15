@@ -1,0 +1,30 @@
+/* Opstartsskærm (kun installeret app). Lægges inline i <head> af nuxt.config.ts, så den
+   står der fra første optegning — appen er en SPA, så der er intet server-renderet DOM at
+   hænge den på. Derfor et pseudo-element på <html>: baggrunden (logo, glød, bølger) og
+   flyet ovenpå som separat SVG-lag (SMIL). Begge har samme 941×1672-format og beskæres ens
+   (cover, centreret), så flyet rammer cirklen. Kilder i design/splash/, se scripts/brand.sh. */
+html[data-pwa='1']::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  background:
+    url('/brand/splash/flight.svg') center / cover no-repeat,
+    image-set(url('/brand/splash/splash-bg.avif') type('image/avif'), url('/brand/splash/splash-bg.webp') type('image/webp')) center / cover no-repeat,
+    #0e2b42;
+  transition: opacity 320ms cubic-bezier(0.32, 0.72, 0, 1), visibility 0s linear 320ms;
+}
+/* Bredere end 3:4 (tablet, liggende): billedet er højformat, så den brede udgave (originalen i
+   midten, uskarp kopi i siderne) skaleres til højden — ligesom flyet, så det stadig rammer cirklen. */
+@media (min-aspect-ratio: 3/4) {
+  html[data-pwa='1']::before {
+    background:
+      url('/brand/splash/flight.svg') center / auto 100% no-repeat,
+      image-set(url('/brand/splash/splash-bg-wide.avif') type('image/avif'), url('/brand/splash/splash-bg-wide.webp') type('image/webp')) center / auto 100% no-repeat,
+      #0a1e33;
+  }
+}
+html[data-pwa='1'].splash-done::before {
+  opacity: 0;
+  visibility: hidden;
+}

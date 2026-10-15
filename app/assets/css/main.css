@@ -1,9 +1,74 @@
 @import "tailwindcss";
 @import "@nuxt/ui";
 
-:root { --ui-primary: var(--color-teal-700); }
-/* I mørk tilstand bruger Nuxt UI mørk tekst på primærfarven — så skal den være lys nok. */
-.dark { --ui-primary: var(--color-teal-400); }
+/* Palette: skovgrøn (forest) som hovedfarve og natblå/lavendel (ink) som neutral. Grøn står
+   aldrig alene for "ind"/"stemmer" — der er altid ikon/tekst med. */
+@theme static {
+  --color-forest-50: #eefbf4;
+  --color-forest-100: #d5f5e4;
+  --color-forest-200: #aeeacc;
+  --color-forest-300: #79d8ae;
+  --color-forest-400: #3dbe8b;
+  --color-forest-500: #22a273;
+  --color-forest-600: #188860;
+  --color-forest-700: #157954;
+  --color-forest-800: #145f44;
+  --color-forest-900: #124e39;
+  --color-forest-950: #072c20;
+
+  --color-ink-50: #f5f6f9;
+  --color-ink-100: #ebedf3;
+  --color-ink-200: #d8dbe6;
+  --color-ink-300: #bbc0d2;
+  --color-ink-400: #9298b0;
+  --color-ink-500: #6e7691;
+  --color-ink-600: #555d78;
+  --color-ink-700: #3e4560;
+  --color-ink-800: #2d3349;
+  --color-ink-900: #21263a;
+  --color-ink-950: #161a29;
+
+  --color-lavender: #c7cee8;
+
+  /* Ud / fejl: varm koralrød, der harmonerer med grøn i stedet for at skrige rødt. */
+  --color-coral-50: #fff3f0;
+  --color-coral-100: #ffe2db;
+  --color-coral-200: #ffc6b8;
+  --color-coral-300: #f99d89;
+  --color-coral-400: #f2735e;
+  --color-coral-500: #e1543e;
+  --color-coral-600: #c2412d;
+  --color-coral-700: #a13424;
+  --color-coral-800: #852d21;
+  --color-coral-900: #6e291f;
+  --color-coral-950: #3c120c;
+
+  /* Info: "på regning", hotel, hjælpetekster. */
+  --color-iris-50: #f1f3fe;
+  --color-iris-100: #e3e7fc;
+  --color-iris-200: #ccd3f9;
+  --color-iris-300: #a5b0f0;
+  --color-iris-400: #7f8ce6;
+  --color-iris-500: #6370dd;
+  --color-iris-600: #4f5bd5;
+  --color-iris-700: #4048ba;
+  --color-iris-800: #363d96;
+  --color-iris-900: #303777;
+  --color-iris-950: #1d2046;
+}
+
+/* Roller (tekstkontrast ≥ 4,5:1 mod baggrunden i begge tilstande):
+   primær/ind = grøn · ud/fejl = koral · venter = rav · info = iris. */
+:root {
+  --ui-bg: var(--color-ink-50);
+  --ui-primary: var(--color-forest-700); --ui-success: var(--color-forest-700);
+  --ui-error: var(--color-coral-600); --ui-warning: var(--color-amber-700); --ui-info: var(--color-iris-600);
+}
+.dark {
+  --ui-bg: var(--color-ink-950); --ui-bg-muted: var(--color-ink-900); --ui-bg-elevated: var(--color-ink-900);
+  --ui-primary: var(--color-forest-400); --ui-success: var(--color-forest-400);
+  --ui-error: var(--color-coral-400); --ui-warning: var(--color-amber-500); --ui-info: var(--color-iris-300);
+}
 html, body { -webkit-tap-highlight-color: transparent; }
 body { padding-bottom: env(safe-area-inset-bottom); }
 

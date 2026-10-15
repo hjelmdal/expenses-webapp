@@ -36,6 +36,16 @@ posten. Kun i det byggede prod — dev har ingen service worker. Rettelser kræv
 Aktive ture gemmes helt på telefonen i baggrunden (`app/composables/offline.ts`): ændrede poster og
 alle kvitteringsbilleder hentes, når turen er hentet med net; arkiverede ture ryddes væk igen.
 
+## Design
+- **Palette** (toppen af `app/assets/css/main.css`): skovgrøn `forest` er hovedfarve og "ind/stemmer",
+  natblå/lavendel `ink` er neutral, `coral` er ud/fejl, `amber` er venter, `iris` er info. Grøn står aldrig
+  alene for en betydning — altid ikon/tekst med. Kategorier har ingen egne farver (8 kan ikke skelnes på
+  farve; ikonerne gør arbejdet).
+- **Splash** kun i den installerede app (head-script i `nuxt.config.ts` + `app/assets/splash.css`, inline i
+  `<head>`, fordi appen er en SPA). Gulv 1,2 s (`app.vue`), loft 3 s. `?splash=1` tvinger den frem.
+  Statuslinjens `theme-color` sættes af samme script (ikke i `meta`), ellers overtager Nuxts head-styring den.
+  Kilder i `design/splash/`; `scripts/brand.sh` (ImageMagick) laver `public/brand/splash/` — redigér aldrig dem.
+
 ## Kvitteringsaflæsning
 `server/utils/receipt.ts` kører den lokale **`claude -p --model sonnet --allowedTools Read`** på
 billederne — ingen API-nøgle. Posten gemmes FØR aflæsning (status `reading`), én ad gangen,

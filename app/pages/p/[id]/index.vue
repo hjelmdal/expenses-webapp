@@ -438,7 +438,7 @@ const splitShort = (e: any) => {
 
     <!-- Overblik -->
     <section class="space-y-3 p-4">
-      <div class="rounded-2xl bg-teal-700 p-4 text-white">
+      <div class="rounded-2xl bg-linear-to-br from-forest-700 to-ink-900 p-4 text-white">
         <div class="text-sm opacity-80">Brugt i alt</div>
         <div class="text-3xl font-semibold tabular-nums">{{ money(s.spent, base) }}</div>
         <div class="mt-1 flex flex-wrap gap-x-3 text-sm opacity-90">
@@ -592,7 +592,7 @@ const splitShort = (e: any) => {
             :class="selecting && !isSpend(e.kind) ? 'opacity-40' : ''">
             <UIcon v-if="selecting" :name="selected.has(e.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'" class="size-6 shrink-0"
               :class="selected.has(e.id) ? 'text-primary' : 'text-dimmed'" />
-            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-elevated text-toned">
               <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
               <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" />

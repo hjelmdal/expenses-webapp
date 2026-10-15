@@ -69,7 +69,7 @@ const full = computed(() => (row.value?.offsetWidth || 360) * 0.55 < -x.value)
     <div v-show="x < 0" class="absolute inset-y-0 right-0 flex" :style="{ width: `${-x}px` }">
       <button v-for="(a, i) in actions" :key="a.key" type="button" :aria-label="a.label" data-swipe-action
         class="flex h-full items-center justify-center text-white transition-[flex-grow] duration-200"
-        :class="[a.color === 'primary' ? 'bg-primary' : a.color === 'neutral' ? 'bg-zinc-500' : 'bg-red-600', i === 0 && full ? 'grow-[10]' : 'grow']"
+        :class="[a.color === 'primary' ? 'bg-primary' : a.color === 'neutral' ? 'bg-ink-500' : 'bg-coral-600', i === 0 && full ? 'grow-[10]' : 'grow']"
         @click.stop="fire(a.key)">
         <UIcon :name="a.icon" class="size-6" />
       </button>

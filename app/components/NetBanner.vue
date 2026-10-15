@@ -15,11 +15,11 @@ const login = () => window.location.assign(`/?login=${Date.now()}`)
 
 <template>
   <div v-if="needsLogin || offlineSince" class="pointer-events-none fixed inset-x-0 bottom-0 z-40 flex justify-center pb-[max(0.5rem,env(safe-area-inset-bottom))]">
-    <button v-if="needsLogin" type="button" class="pointer-events-auto mb-24 flex items-center gap-2 rounded-full bg-amber-600 px-4 py-2 text-sm text-white shadow-lg" @click="login">
+    <button v-if="needsLogin" type="button" class="pointer-events-auto mb-24 flex items-center gap-2 rounded-full bg-amber-700 px-4 py-2 text-sm text-white shadow-lg" @click="login">
       <UIcon name="i-lucide-log-in" class="size-4" />
       Login er udløbet — tryk for at logge ind igen
     </button>
-    <div v-else class="mb-24 flex items-center gap-2 rounded-full bg-zinc-800 px-4 py-2 text-sm text-white shadow-lg">
+    <div v-else class="mb-24 flex items-center gap-2 rounded-full bg-ink-800 px-4 py-2 text-sm text-white shadow-lg">
       <UIcon name="i-lucide-wifi-off" class="size-4" />
       Offline{{ time ? ` · data fra ${time}` : '' }}
     </div>
