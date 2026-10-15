@@ -12,7 +12,8 @@
 const VERSION = '__VERSION__'
 const ASSETS = __ASSETS__
 const STATIC = `static-${VERSION}`
-const DATA = 'data-v1'
+// v2: v1 kunne have et forkert billede under et genbrugt billed-id (rettet i server/utils/db.ts).
+const DATA = 'data-v2'
 
 self.addEventListener('install', (e) => {
   // Alt eller intet: kan app-skal og filer ikke hentes (fx udløbet login), beholdes den gamle version.
@@ -21,7 +22,7 @@ self.addEventListener('install', (e) => {
 
 self.addEventListener('activate', (e) => {
   e.waitUntil((async () => {
-    for (const k of await caches.keys()) if (k.startsWith('static-') && k !== STATIC) await caches.delete(k)
+    for (const k of await caches.keys()) if (k !== STATIC && k !== DATA) await caches.delete(k)
     await self.clients.claim()
   })())
 })
@@ -58,7 +59,8 @@ async function page(req, url) {
 async function cacheFirst(req, name) {
   const hit = await caches.match(req)
   if (hit) return hit
-  const res = await fetch(req)
+  // Forbi browserens egen HTTP-cache: den kan stadig have et gammelt svar under samme URL.
+  const res = await fetch(new Request(req, { cache: 'reload' }))
   if (res.ok) {
     const copy = res.clone()
     caches.open(name).then(c => c.put(req, copy))

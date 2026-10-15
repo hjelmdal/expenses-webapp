@@ -68,7 +68,7 @@ function migrate(d: DatabaseSync) {
     );
     CREATE INDEX IF NOT EXISTS entries_project ON entries(project_id, occurred_at);
     CREATE TABLE IF NOT EXISTS attachments (
-      id INTEGER PRIMARY KEY,
+      id INTEGER PRIMARY KEY AUTOINCREMENT,            -- se attachmentIds() nedenfor
       entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
       file TEXT NOT NULL,
       mime TEXT NOT NULL,
@@ -118,7 +118,28 @@ function migrate(d: DatabaseSync) {
     check_out TEXT,                                -- YYYY-MM-DD; NULL = åbent
     settled_at TEXT                                -- regningen betalt (checket ud)
   )`)
+  attachmentIds(d)
   // Turens standardfordeling for nye udgifter: NULL (senere) | equal | weights (deltagernes vægte).
   const pcols = new Set((d.prepare('PRAGMA table_info(projects)').all() as any[]).map(c => c.name))
   if (!pcols.has('default_split')) d.exec('ALTER TABLE projects ADD COLUMN default_split TEXT')
+}
+
+// Billed-id'er må aldrig genbruges: /api/attachments/:id gemmes på telefonen (service worker og
+// HTTP-cache), så et genbrugt id viste et slettet billede på en ny post. Uden AUTOINCREMENT
+// genbruger SQLite id'et, når det højeste slettes — så tabellen bygges om med AUTOINCREMENT.
+function attachmentIds(d: DatabaseSync) {
+  const t = d.prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'attachments'").get() as any
+  if (!t || /AUTOINCREMENT/i.test(t.sql)) return
+  d.exec(`BEGIN;
+    CREATE TABLE attachments_new (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      entry_id INTEGER NOT NULL REFERENCES entries(id) ON DELETE CASCADE,
+      file TEXT NOT NULL,
+      mime TEXT NOT NULL,
+      created_at TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+    INSERT INTO attachments_new (id, entry_id, file, mime, created_at) SELECT id, entry_id, file, mime, created_at FROM attachments;
+    DROP TABLE attachments;
+    ALTER TABLE attachments_new RENAME TO attachments;
+    COMMIT;`)
 }

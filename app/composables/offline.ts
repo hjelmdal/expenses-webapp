@@ -2,11 +2,12 @@
 // sidst, og alle kvitteringsbilleder i baggrunden, så hele turen kan ses uden net. Service
 // workeren (sw/sw.js) gemmer svarene i sin cache (DATA). Arkiverede ture hentes ikke, og
 // deres kopi ryddes væk fra telefonen.
-const DATA = 'data-v1' // samme navn som i sw/sw.js
-const key = (pid: number) => `expenses-offline-${pid}`
+const DATA = 'data-v2' // samme navn som i sw/sw.js
+const key = (pid: number) => `expenses-offline2-${pid}` // 2: følger DATA (v1 er ryddet af service workeren)
 type Saved = { entries: Record<string, string>, images: number[] }
 
 function load(pid: number): Saved {
+  localStorage.removeItem(`expenses-offline-${pid}`)
   try { return JSON.parse(localStorage.getItem(key(pid)) || '') } catch { return { entries: {}, images: [] } }
 }
 const hash = (s: string) => { let h = 5381; for (let i = 0; i < s.length; i++) h = (h * 33 ^ s.charCodeAt(i)) >>> 0; return h.toString(36) }
