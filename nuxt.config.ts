@@ -3,6 +3,8 @@ import { readdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
 const isDev = process.argv.includes('dev')
+// iOS-opstartsbilleder pr. skærmstørrelse (laves af scripts/brand.sh).
+const startupSizes: { w: number, h: number, r: number }[] = JSON.parse(readFileSync('scripts/startup-sizes.json', 'utf8'))
 // Version = 1.<antal commits>, regnet ved build — tæller selv op for hvert commit, der
 // bygges til prod. Klienten sammenligner sin version med serverens (plugins/version.client.ts).
 const version = isDev ? 'dev' : (() => {
@@ -36,6 +38,8 @@ export default defineNuxtConfig({
       const dir = nitro.options.output.publicDir
       const files = ['_nuxt', 'brand'].flatMap(d => readdirSync(join(dir, d), { recursive: true, withFileTypes: true })
         .filter(f => f.isFile()).map(f => '/' + relative(dir, join(f.parentPath, f.name))))
+        // iOS henter selv sit opstartsbillede — de 7 store billeder skal ikke med i cachen.
+        .filter(f => !f.includes('/splash/startup-'))
       const sw = readFileSync('sw/sw.js', 'utf8').replace('__VERSION__', version).replace('__ASSETS__', JSON.stringify(files))
       writeFileSync(join(dir, 'sw.js'), sw)
     },
@@ -57,9 +61,11 @@ export default defineNuxtConfig({
       // head-styring ville ellers overtage splashens ekstra tag ved hydrering og efterlade den
       // mørke farve i lys tilstand. Så længe splashen vises, står splashens øverste farve
       // FØRST (det første, der matcher, vinder) — ellers en lys stribe over den mørke splash.
+      // Flyet er et <img> (ikke CSS-baggrund — iOS afspiller ikke SVG-animationen dér), lagt
+      // direkte i <html>, da <body> ikke findes endnu.
       // __splashDone() toner ud og giver statuslinjen tilbage. Loft: 3 s. Gulvet: app.vue.
       script: [{
-        innerHTML: `try{var d=document.documentElement,h=document.head,t=function(c,q){var m=document.createElement('meta');m.name='theme-color';m.content=c;if(q)m.media=q;h.appendChild(m);return m};t('#f5f6f9','(prefers-color-scheme: light)');t('#161a29','(prefers-color-scheme: dark)');if(matchMedia('(display-mode: standalone)').matches||navigator.standalone||/[?&]splash=1/.test(location.search)){d.dataset.pwa='1';var m=t('#0d3245');h.insertBefore(m,h.firstChild);window.__splashDone=function(){d.classList.add('splash-done');m.remove()};setTimeout(window.__splashDone,3000)}}catch(e){}`,
+        innerHTML: `try{var d=document.documentElement,h=document.head,t=function(c,q){var m=document.createElement('meta');m.name='theme-color';m.content=c;if(q)m.media=q;h.appendChild(m);return m};t('#f5f6f9','(prefers-color-scheme: light)');t('#161a29','(prefers-color-scheme: dark)');if(matchMedia('(display-mode: standalone)').matches||navigator.standalone||/[?&]splash=1/.test(location.search)){d.dataset.pwa='1';var m=t('#0d3245');h.insertBefore(m,h.firstChild);var p=new Image();p.className='splash-plane';p.alt='';p.src='/brand/splash/flight.svg';d.appendChild(p);window.__splashDone=function(){d.classList.add('splash-done');m.remove();setTimeout(function(){p.remove()},400)};setTimeout(window.__splashDone,3000)}}catch(e){}`,
         tagPosition: 'head',
       }],
       style: [{ innerHTML: readFileSync('app/assets/splash.css', 'utf8') }],
@@ -68,6 +74,12 @@ export default defineNuxtConfig({
         { rel: 'icon', href: '/brand/icon.svg', type: 'image/svg+xml' },
         { rel: 'apple-touch-icon', href: '/brand/apple-touch-icon.png' },
         { rel: 'manifest', href: '/brand/manifest.webmanifest' },
+        // iOS viser ellers sort, til siden er indlæst. Ét billede pr. skærm; kun højformat.
+        ...startupSizes.map(x => ({
+          rel: 'apple-touch-startup-image',
+          media: `screen and (device-width: ${x.w}px) and (device-height: ${x.h}px) and (-webkit-device-pixel-ratio: ${x.r}) and (orientation: portrait)`,
+          href: `/brand/splash/startup-${x.w * x.r}x${x.h * x.r}.jpg`,
+        })),
       ],
     },
   },

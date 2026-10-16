@@ -23,6 +23,15 @@ magick "$SRC/splash-bg.png" "$T/mask.png" -alpha off -compose CopyOpacity -compo
 magick "$T/back.png" "$T/front.png" -gravity center -compose Over -composite "$T/wide.png"
 magick "$T/wide.png" -quality 55 "$OUT/splash-bg-wide.avif"
 magick "$T/wide.png" -quality 78 -define webp:method=6 "$OUT/splash-bg-wide.webp"
+# iOS' egne opstartsbilleder (apple-touch-startup-image): vises med det samme, før siden er
+# indlæst — ellers er skærmen sort, til HTML'en er der. Baggrund + flyet i animationens første
+# position (design/splash/plane-rest.png), så det letter derfra uden spring. Beskåret som
+# splashen (cover, centreret). Størrelser: scripts/startup-sizes.json (læses også af nuxt.config.ts).
+magick "$SRC/splash-bg.png" "$SRC/plane-rest.png" -composite "$T/startup.png"
+rm -f "$OUT"/startup-*.jpg
+for size in $(node -e 'for (const s of require("./scripts/startup-sizes.json")) console.log(`${s.w * s.r}x${s.h * s.r}`)'); do
+  magick "$T/startup.png" -resize "${size}^" -gravity center -extent "$size" -quality 85 "$OUT/startup-$size.jpg"
+done
 rm -rf "$T"
 # Flyet, der flyver rundt om logoet: separat SVG-lag (SMIL), samme viewBox som baggrunden.
 cp "$SRC/flight-overlay.svg" "$OUT/flight.svg"
