@@ -3,8 +3,13 @@ const route = useRoute()
 const toast = useToast()
 const id = Number(route.params.id)
 const { data, refresh, error } = await useAsyncData(`p-${id}`, () => api<any>(`/projects/${id}`))
-const p = computed(() => data.value?.project)
-const s = computed(() => data.value?.summary)
+// Turen med telefonens ventende poster regnet med (composables/pending.ts) — så tal og liste
+// passer, også offline. Alt herunder læser fra view, ikke data.
+const outbox = useOutbox()
+const outboxPending = computed(() => outbox.pending.value.filter(x => x.projectId === id))
+const view = computed(() => withPending(data.value, outboxPending.value))
+const p = computed(() => view.value?.project)
+const s = computed(() => view.value?.summary)
 // Hele turen (poster og billeder) gemmes på telefonen i baggrunden, når der er net.
 const { offlineSince } = useNet()
 watch(data, d => { if (d && !offlineSince.value) keepTripOffline(id, d) }, { immediate: true })
@@ -54,7 +59,10 @@ function rowAction(key: string, e: any) {
   let undone = false
   const timer = setTimeout(async () => {
     if (undone) return
-    try { await api(`/entries/${e.id}`, { method: 'DELETE' }) } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
+    try {
+      if (e.pending) await outbox.remove(e.pending)
+      else await api(`/entries/${e.id}`, { method: 'DELETE' })
+    } catch (err) { toast.add({ title: errMsg(err), color: 'error' }) }
     await refresh()
     hidden.value.delete(e.id)
   }, 5000)
@@ -69,11 +77,11 @@ function rowAction(key: string, e: any) {
 
 const days = computed(() => {
   const g: { day: string, items: any[], total: number }[] = []
-  for (const e of (data.value?.entries || []).filter((x: any) => !hidden.value.has(x.id) && (!catFilter.value || (isSpend(x.kind) && (x.category || 'none') === catFilter.value)))) {
+  for (const e of (view.value?.entries || []).filter((x: any) => !hidden.value.has(x.id) && (!catFilter.value || (isSpend(x.kind) && (x.category || 'none') === catFilter.value)))) {
     let d = g.find(x => x.day === e.occurred_at)
     if (!d) g.push(d = { day: e.occurred_at, items: [], total: 0 })
     d.items.push(e)
-    if (isSpend(e.kind)) d.total += spendSign(e.kind) * (e.base_value || 0)
+    if (isSpend(e.kind)) d.total += spendSign(e.kind) * (e.base_cost ?? e.base_value ?? 0)
   }
   return g
 })
@@ -81,7 +89,7 @@ const days = computed(() => {
 // --- Massefordeling: vælg flere udgifter (eller alle viste) og giv dem samme fordeling.
 const selecting = ref(false)
 const selected = ref(new Set<number>())
-const visibleExpenses = computed(() => days.value.flatMap(d => d.items).filter((e: any) => isSpend(e.kind)))
+const visibleExpenses = computed(() => days.value.flatMap(d => d.items).filter((e: any) => isSpend(e.kind) && !e.pending))
 function select(preset: 'all' | 'unsplit' | 'none') {
   const list = preset === 'all' ? visibleExpenses.value : preset === 'unsplit' ? visibleExpenses.value.filter((e: any) => !e.split) : []
   selected.value = new Set(list.map((e: any) => e.id))
@@ -89,7 +97,7 @@ function select(preset: 'all' | 'unsplit' | 'none') {
 function startSelect(preset: 'all' | 'unsplit' | 'none' = 'none') { selecting.value = true; select(preset) }
 function stopSelect() { selecting.value = false; selected.value = new Set() }
 function toggleSel(e: any) {
-  if (!isSpend(e.kind)) return
+  if (!isSpend(e.kind) || e.pending) return
   const s = new Set(selected.value)
   s.has(e.id) ? s.delete(e.id) : s.add(e.id)
   selected.value = s
@@ -133,7 +141,7 @@ const payerKey = `expenses-payer-${id}`
 const payer = ref<number | null>(null)
 onMounted(() => { const v = Number(localStorage.getItem(payerKey)); if (v) payer.value = v })
 watch(payer, v => { v ? localStorage.setItem(payerKey, String(v)) : localStorage.removeItem(payerKey) })
-const people = computed<any[]>(() => data.value?.participants || [])
+const people = computed<any[]>(() => view.value?.participants || [])
 watch(people, ps => { if (payer.value && !ps.some(x => x.id === payer.value)) payer.value = null })
 const payerName = computed(() => people.value.find(x => x.id === payer.value)?.name)
 const pickPayer = ref(false)
@@ -154,7 +162,6 @@ function snap(target: number | null = null) {
 
 // Billederne formindskes og gemmes i udbakken på telefonen, før de sendes. Først når
 // serveren har svaret OK, slettes de lokalt — svigter nettet, sendes de igen automatisk.
-const outbox = useOutbox()
 async function onFiles(ev: Event) {
   const input = ev.target as HTMLInputElement
   const files = Array.from(input.files || [])
@@ -183,7 +190,6 @@ async function onFiles(ev: Event) {
 const QUEUED_TOAST = { title: 'Gemt på telefonen', description: 'Serveren svarede ikke — sendes automatisk, så snart den gør.', color: 'warning' as const, icon: 'i-lucide-cloud-off' }
 // Sendt fra udbakken (fx efter at nettet kom tilbage): vis de nye poster.
 watch(outbox.sentCount, () => refresh())
-const outboxPending = computed(() => outbox.pending.value.filter(x => x.projectId === id))
 const outboxThumbs = ref<string[]>([])
 watch(outboxPending, (items, _, onCleanup) => {
   const urls = items.flatMap(x => (x.files || []).slice(0, 1)).slice(0, 4).map(b => URL.createObjectURL(b))
@@ -203,7 +209,10 @@ const stDeposit = computed(() => st.deposit)
 const stRemainder = computed(() => Math.max(0, st.total - (st.use_deposits ? stDeposit.value : 0)))
 const stBack = computed(() => st.use_deposits ? Math.max(0, stDeposit.value - st.total) : 0)
 // t = én åben regning (pr. hotel og valuta) fra summary.tab.
+// En ventende post (kun på telefonen) kan ikke betales/rettes endnu — den findes ikke på serveren.
+const PENDING_TOAST = { title: 'Venter på at blive sendt', description: 'Kan rettes og betales, når den er sendt.', icon: 'i-lucide-cloud-off', color: 'warning' as const }
 function openSettle(t: any) {
+  if (t.ids.some((x: number) => x < 0)) return toast.add({ ...PENDING_TOAST, title: 'Regningen har poster, der venter på at blive sendt' })
   Object.assign(st, { stay_id: t.stay, name: t.name || '', currency: t.currency, total: t.amount, deposit: t.deposit, method: 'card', paid_by: payer.value, base_amount: '', date: localDate(), use_deposits: false })
   billOpen.value = false
   settleOpen.value = true
@@ -215,7 +224,7 @@ const billOpen = ref(false)
 const billKey = ref<{ stay: number | null, currency: string } | null>(null)
 const bill = computed(() => s.value?.tab.find((t: any) => t.stay === billKey.value?.stay && t.currency === billKey.value?.currency))
 const ticked = ref(new Set<number>())
-const billRows = computed(() => (data.value?.entries || []).filter((e: any) => bill.value?.ids.includes(e.id))
+const billRows = computed(() => (view.value?.entries || []).filter((e: any) => bill.value?.ids.includes(e.id))
   .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at) || a.id - b.id))
 const onBill = (e: any) => spendSign(e.kind) * ((e.amount || 0) - (e.tip_cash ? e.tip || 0 : 0))
 function openBill(t: any) {
@@ -229,7 +238,7 @@ function openBill(t: any) {
 // Justering ved check-ud: ret et beløb, tilføj en manglende post, eller bogfør forskellen.
 const editing = ref<number | null>(null)
 const editVal = ref('')
-function editRow(r: any) { editing.value = r.id; editVal.value = String(Math.abs(onBill(r))) }
+function editRow(r: any) { if (r.pending) return toast.add(PENDING_TOAST); editing.value = r.id; editVal.value = String(Math.abs(onBill(r))) }
 async function saveRow(r: any) {
   if (editing.value !== r.id) return
   editing.value = null
@@ -245,14 +254,18 @@ const nl = reactive({ description: '', amount: '', occurred_at: '' })
 // Negativt beløb = rabat/credit på regningen.
 async function addBillLine(description: string, amount: number, date: string) {
   if (!bill.value || !amount) return
+  const body = {
+    kind: amount < 0 ? 'credit' : 'expense', amount: Math.abs(amount), method: 'room', currency: bill.value.currency,
+    description, occurred_at: date, stay_id: bill.value.stay, paid_by: payer.value,
+  }
   try {
-    await api(`/projects/${id}/entries`, { method: 'POST', body: {
-      kind: amount < 0 ? 'credit' : 'expense', amount: Math.abs(amount), method: 'room', currency: bill.value.currency,
-      description, occurred_at: date, stay_id: bill.value.stay, paid_by: payer.value,
-    } })
+    await outbox.add({ type: 'entry', projectId: id, body })
     await refresh()
     return true
-  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) }
+  } catch (e: any) {
+    if (e?.queued) { toast.add(QUEUED_TOAST); return true }
+    toast.add({ title: errMsg(e), color: 'error' })
+  }
 }
 async function addMissing() {
   if (await addBillLine(nl.description.trim() || 'Post på hotelregningen', parseAmount(nl.amount), nl.occurred_at || localDate())) {
@@ -285,7 +298,7 @@ async function settle() {
 }
 
 // --- Depositum: skal afstemmes (alt/delvist/intet retur), så det ikke glemmes
-const openDeps = computed(() => (data.value?.entries || []).filter((e: any) => e.dep && !e.dep.closed)
+const openDeps = computed(() => (view.value?.entries || []).filter((e: any) => e.dep && !e.dep.closed)
   .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at) || a.id - b.id))
 const depOpen = ref(false)
 const depEntry = ref<any>(null)
@@ -295,6 +308,7 @@ function openDep(e: any) { depEntry.value = e; depOpen.value = true }
 const payOpen = ref(false)
 const pay = reactive<any>({ id: 0, title: '', currency: '', amount: '', method: 'cash', paid_by: null, date: '' })
 function openPay(d: any) {
+  if (d.id < 0) return toast.add(PENDING_TOAST)
   Object.assign(pay, { id: d.id, title: d.title, currency: d.currency, amount: String(d.remaining), method: defMethod.value === 'cash' ? 'cash' : 'card', paid_by: payer.value, date: localDate() })
   payOpen.value = true
 }
@@ -369,14 +383,15 @@ function flow(e: any) {
   return { sign: '−', text: 'text-error' }
 }
 function rowTitle(e: any) {
-  return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.status === 'reading' ? 'Aflæser kvittering…' : KIND_LABEL[e.kind] || 'Udgift')
+  return e.merchant || e.description || (e.kind === 'withdrawal' ? 'Kontanthævning' : e.photo ? 'Kvittering — aflæses, når den er sendt' : e.status === 'reading' ? 'Aflæser kvittering…' : KIND_LABEL[e.kind] || 'Udgift')
 }
 const rowIcon = (e: any) => categoryOf(e.category)?.icon || (e.kind === 'credit' ? 'i-lucide-badge-percent' : e.attachments.length ? 'i-lucide-receipt' : 'i-lucide-arrow-up-right')
 const rowMeta = (e: any) => [
+  e.pending ? 'venter på at blive sendt' : '',
   isSpend(e.kind) ? categoryOf(e.category)?.label || '' : '',
   e.kind !== 'expense' ? KIND_LABEL[e.kind] : '',
   e.method === 'cash' && e.kind !== 'withdrawal' ? 'kontant' : '',
-  e.method === 'room' ? [e.settled_at ? 'regning betalt' : 'på regning', (data.value?.stays || []).find((x: any) => x.id === e.stay)?.name].filter(Boolean).join(' · ') : '',
+  e.method === 'room' ? [e.settled_at ? 'regning betalt' : 'på regning', (view.value?.stays || []).find((x: any) => x.id === e.stay)?.name].filter(Boolean).join(' · ') : '',
   depositText(e),
   e.method === 'later' && e.amount ? (laterRest(e) > 0.004 ? `rest ${money(laterRest(e), e.currency)}` : 'betalt') : '',
   tipText(e),
@@ -581,14 +596,15 @@ const splitShort = (e: any) => {
           <span>{{ dayLabel(d.day) }}</span><span class="tabular-nums">{{ money(d.total, base) }}</span>
         </div>
         <div class="divide-y divide-default overflow-hidden rounded-xl border border-default">
-          <SwipeRow v-for="e in d.items" :key="e.id" :actions="ROW_ACTIONS" :disabled="selecting" @action="k => rowAction(k, e)">
-          <component :is="selecting ? 'button' : NuxtLink" v-bind="selecting ? { type: 'button', onClick: () => toggleSel(e) } : { to: `/p/${id}/e/${e.id}` }"
+          <SwipeRow v-for="e in d.items" :key="e.pending || e.id" :actions="ROW_ACTIONS" :disabled="selecting" @action="k => rowAction(k, e)">
+          <component :is="selecting || e.pending ? 'button' : NuxtLink" v-bind="selecting ? { type: 'button', onClick: () => toggleSel(e) } : e.pending ? { type: 'button', onClick: () => toast.add(PENDING_TOAST) } : { to: `/p/${id}/e/${e.id}` }"
             draggable="false" class="flex w-full select-none items-center gap-3 p-3 text-left active:bg-elevated"
             :class="selecting && !isSpend(e.kind) ? 'opacity-40' : ''">
             <UIcon v-if="selecting" :name="selected.has(e.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'" class="size-6 shrink-0"
               :class="selected.has(e.id) ? 'text-primary' : 'text-dimmed'" />
             <div class="flex size-9 shrink-0 items-center justify-center rounded-full bg-elevated text-toned">
-              <UIcon v-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
+              <UIcon v-if="e.pending" name="i-lucide-cloud-off" class="size-5 text-warning" />
+              <UIcon v-else-if="e.status === 'reading'" name="i-lucide-loader-circle" class="size-5 animate-spin text-primary" />
               <UIcon v-else-if="e.status === 'failed'" name="i-lucide-triangle-alert" class="size-5 text-warning" />
               <UIcon v-else-if="e.kind === 'withdrawal'" name="i-lucide-banknote" class="size-5" />
               <UIcon v-else-if="e.kind === 'income'" name="i-lucide-arrow-down-left" class="size-5" />
@@ -614,7 +630,7 @@ const splitShort = (e: any) => {
         <div v-if="bill" class="space-y-3">
           <p class="text-sm text-muted">Hold posterne op mod hotellets udskrift, og kryds af. Beløb er inkl. drikkepenge skrevet på regningen.</p>
           <div class="divide-y divide-default rounded-lg border border-default">
-            <div v-for="r in billRows" :key="r.id" class="flex items-center gap-2 px-3 py-2">
+            <div v-for="r in billRows" :key="r.pending || r.id" class="flex items-center gap-2 px-3 py-2">
               <button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" @click="tick(r.id)">
                 <UIcon :name="ticked.has(r.id) ? 'i-lucide-circle-check' : 'i-lucide-circle'" class="size-5 shrink-0" :class="ticked.has(r.id) ? 'text-primary' : 'text-muted'" />
                 <div class="min-w-0 flex-1">
@@ -626,7 +642,8 @@ const splitShort = (e: any) => {
                 @keydown.enter.prevent="saveRow(r)" @blur="saveRow(r)" />
               <button v-else type="button" class="rounded-md px-1.5 py-1 text-sm tabular-nums underline decoration-dotted underline-offset-4"
                 :class="r.kind === 'credit' ? 'text-success' : ''" :aria-label="`Ret beløb for ${rowTitle(r)}`" @click="editRow(r)">{{ money(onBill(r), r.currency) }}</button>
-              <UButton :to="`/p/${id}/e/${r.id}`" icon="i-lucide-chevron-right" size="xs" variant="ghost" color="neutral" square aria-label="Åbn posten" />
+              <UIcon v-if="r.pending" name="i-lucide-cloud-off" class="size-4 text-warning" aria-label="Venter på at blive sendt" />
+              <UButton v-else :to="`/p/${id}/e/${r.id}`" icon="i-lucide-chevron-right" size="xs" variant="ghost" color="neutral" square aria-label="Åbn posten" />
             </div>
           </div>
           <p class="text-xs text-muted">Tryk på et beløb for at rette det. Hører en post ikke til her, så åbn den og vælg et andet hotel eller “Kort”.</p>

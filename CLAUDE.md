@@ -37,6 +37,10 @@ hooket i `nuxt.config.ts`) gør, at appen åbner uden net: sider og `/_nuxt/` fr
 først og ellers sidst hentede svar (`x-offline-cache`), som `NetBanner` viser som "Offline · data fra kl. …".
 Udløbet Access-login (redirect/401/403) giver "Log ind igen", og udbakken venter i stedet for at droppe
 posten. Kun i det byggede prod — dev har ingen service worker. Rettelser kræver stadig net.
+**Ventende poster tæller med:** beregningen (forbrug, kontanter, hotelregning, fordeling) står i
+`shared/utils/ledger.ts` og bruges af både serveren (`server/utils/ledger.ts`) og telefonen
+(`app/composables/pending.ts`), der regner udbakkens poster med og viser dem i listen. Forsiden læser
+derfor `view` (data + ventende), ikke `data`. Ventende poster har negativt id og kan ikke åbnes/betales.
 Aktive ture gemmes helt på telefonen i baggrunden (`app/composables/offline.ts`): ændrede poster og
 alle kvitteringsbilleder hentes, når turen er hentet med net; arkiverede ture ryddes væk igen.
 
