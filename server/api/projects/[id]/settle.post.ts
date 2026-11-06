@@ -39,8 +39,8 @@ export default defineEventHandler(async (event) => {
   }
   const remainder = left
   if (remainder > 0) {
-    db.prepare(`INSERT INTO payments (project_id, entry_id, amount, currency, method, paid_by, occurred_at, note)
-      VALUES (?, NULL, ?, ?, ?, ?, ?, ?)`).run(id, remainder, currency, method, payer, date, ['Hotelregning', stays.find(s => s.id === stay)?.name].filter(Boolean).join(' · '))
+    db.prepare(`INSERT INTO payments (project_id, entry_id, stay_id, amount, currency, method, paid_by, occurred_at, note)
+      VALUES (?, NULL, ?, ?, ?, ?, ?, ?, ?)`).run(id, stay, remainder, currency, method, payer, date, ['Hotelregning', stays.find(s => s.id === stay)?.name].filter(Boolean).join(' · '))
   }
   const rate = charged && remainder > 0 ? charged / remainder : null
   // Posterne låses til hotellet (stay_id), så de ikke flytter, når hotellet er markeret checket ud.

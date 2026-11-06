@@ -181,13 +181,28 @@ export function summarize(o: { project: any, participants: any[], entries: any[]
   }
   tab.sort((a, b) => (stays.findIndex(x => x.id === a.stay) - stays.findIndex(x => x.id === b.stay)))
 
+  // Betalte hotelregninger: posterne, modregnet depositum og betalingen — så de kan ses og genåbnes.
+  const onTab = (e: any) => spendSign(e.kind) * ((Number(e.amount) || 0) - (e.method !== 'cash' && e.tip_cash ? Number(e.tip) || 0 : 0))
+  const paidTabs = stays.filter(st => st.settled_at).map((st) => {
+    const rows = entries.filter(e => isSpend(e.kind) && e.method === 'room' && e.settled_at && e.stay === st.id)
+    const deps = entries.filter(e => e.kind === 'deposit' && e.dep?.applied && e.stay === st.id)
+    return {
+      stay: st.id, name: st.name, settled_at: st.settled_at, settled: true,
+      currency: rows[0]?.currency || o.project.currency,
+      amount: round2(rows.reduce((t, e) => t + onTab(e), 0)), count: rows.length, ids: rows.map(e => e.id),
+      deposit: round2(deps.reduce((t, e) => t + (Number(e.amount) || 0) - (Number(e.refunded) || 0), 0)),
+      // Betalingen: knyttet til hotellet — eller, fra før payments.stay_id, genkendt på tekst og dato.
+      payments: pays.filter(p => p.entry_id == null && (p.stay_id === st.id || (p.stay_id == null && String(p.note || '').startsWith('Hotelregning') && p.occurred_at === st.settled_at))),
+    }
+  }).filter(t => t.count)
+
   // Betalinger (delbetalinger og rest af hotelregning) — kontante trækkes fra pungen.
   for (const p of pays) if (p.method === 'cash') addTo(cashOut, p.currency, Number(p.amount) || 0)
 
   return {
     base: o.project.base_currency, spent: round2(spent), income: round2(income), tips: round2(tips), service: round2(service), unsplit: round2(unsplit),
     unconverted, reading, byCurrency,
-    byCategory: Object.fromEntries(Object.entries(byCategory).map(([k, v]) => [k, round2(v)]).sort((a, b) => b[1] - a[1])), cashRate: o.cashRate, tab, deposits, due,
+    byCategory: Object.fromEntries(Object.entries(byCategory).map(([k, v]) => [k, round2(v)]).sort((a, b) => b[1] - a[1])), cashRate: o.cashRate, tab, paidTabs, deposits, due,
     cash: Object.fromEntries([...new Set([...Object.keys(cashIn), ...Object.keys(cashOut)])].map(c => [c, round2((cashIn[c] || 0) - (cashOut[c] || 0))])),
     cashIn, cashOut,
     perParticipant: participants.map(p => ({

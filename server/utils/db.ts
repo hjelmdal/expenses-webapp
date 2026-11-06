@@ -128,6 +128,9 @@ function migrate(d: DatabaseSync) {
   // Turens standardfordeling for nye udgifter: NULL (senere) | equal | weights (deltagernes vægte).
   const pcols = new Set((d.prepare('PRAGMA table_info(projects)').all() as any[]).map(c => c.name))
   if (!pcols.has('default_split')) d.exec('ALTER TABLE projects ADD COLUMN default_split TEXT')
+  // Betaling af en hotelregning hører til hotellet, så regningen kan genåbnes (stays/[sid]/reopen).
+  const paycols = new Set((d.prepare('PRAGMA table_info(payments)').all() as any[]).map(c => c.name))
+  if (!paycols.has('stay_id')) d.exec('ALTER TABLE payments ADD COLUMN stay_id INTEGER')
 }
 
 // Billed-id'er må aldrig genbruges: /api/attachments/:id gemmes på telefonen (service worker og

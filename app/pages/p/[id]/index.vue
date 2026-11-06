@@ -221,19 +221,35 @@ function openSettle(t: any) {
 // Regningen post for post — til at holde op mod hotellets udskrift ved check-ud.
 const billOpen = ref(false)
 // Regningen følges via hotel + valuta, så den opdateres, når en post rettes eller tilføjes.
-const billKey = ref<{ stay: number | null, currency: string } | null>(null)
-const bill = computed(() => s.value?.tab.find((t: any) => t.stay === billKey.value?.stay && t.currency === billKey.value?.currency))
+const billKey = ref<{ stay: number | null, currency: string, settled?: boolean } | null>(null)
+const bill = computed(() => (billKey.value?.settled ? s.value?.paidTabs : s.value?.tab)
+  ?.find((t: any) => t.stay === billKey.value?.stay && t.currency === billKey.value?.currency))
 const ticked = ref(new Set<number>())
 const billRows = computed(() => (view.value?.entries || []).filter((e: any) => bill.value?.ids.includes(e.id))
   .sort((a: any, b: any) => a.occurred_at.localeCompare(b.occurred_at) || a.id - b.id))
 const onBill = (e: any) => spendSign(e.kind) * ((e.amount || 0) - (e.tip_cash ? e.tip || 0 : 0))
 function openBill(t: any) {
-  billKey.value = { stay: t.stay, currency: t.currency }
+  billKey.value = { stay: t.stay, currency: t.currency, settled: !!t.settled }
   Object.assign(nl, { description: '', amount: '', occurred_at: localDate() })
   hotelTotal.value = ''
   editing.value = null
   billOpen.value = true
 }
+
+// Betalt regning: genåbn (fx betalt med forkert beløb eller kurs). Betalingen slettes, og
+// posterne står på den åbne regning igen.
+const reopening = ref(false)
+async function reopenBill() {
+  if (!bill.value?.settled || !confirm(`Genåbn regningen for ${bill.value.name}? Betalingen slettes, og posterne står på den åbne regning igen, så den kan betales igen.`)) return
+  reopening.value = true
+  try {
+    await api(`/stays/${bill.value.stay}/reopen`, { method: 'POST' })
+    billKey.value = { ...billKey.value!, settled: false }
+    await refresh()
+    toast.add({ title: 'Regningen er åben igen', color: 'success' })
+  } catch (e) { toast.add({ title: errMsg(e), color: 'error' }) } finally { reopening.value = false }
+}
+const personName = (pid: number | null) => people.value.find((x: any) => x.id === pid)?.name
 
 // Justering ved check-ud: ret et beløb, tilføj en manglende post, eller bogfør forskellen.
 const editing = ref<number | null>(null)
@@ -532,6 +548,17 @@ const splitShort = (e: any) => {
             <UButton size="sm" icon="i-lucide-check" label="Betal" @click.stop="openSettle(t)" />
           </div>
         </div>
+        <!-- Betalte hotelregninger: kan ses og genåbnes (fx betalt med forkert beløb eller kurs) -->
+        <div v-if="s.paidTabs?.length" class="col-span-2 rounded-xl border border-default p-3">
+          <div class="mb-1 flex items-center gap-1.5 text-muted"><UIcon name="i-lucide-hotel" class="size-4" /> Betalte hotelregninger</div>
+          <button v-for="t in s.paidTabs" :key="`paid-${t.stay}`" type="button" class="flex w-full items-center justify-between gap-2 py-1.5 text-left" @click="openBill(t)">
+            <span class="min-w-0">
+              <span class="block truncate font-medium">{{ t.name }}</span>
+              <span class="block text-xs text-muted">betalt {{ shortDate(t.settled_at) }} · {{ t.count }} poster</span>
+            </span>
+            <span class="flex shrink-0 items-center gap-1 tabular-nums">{{ money(t.amount, t.currency) }}<UIcon name="i-lucide-chevron-right" class="size-4 text-muted" /></span>
+          </button>
+        </div>
       </div>
       <!-- Fordeling pr. kategori: én serie, én farve, navn + beløb direkte ved hver bjælke. -->
       <div v-if="catRows.length" class="rounded-xl border border-default p-3 text-sm">
@@ -628,7 +655,8 @@ const splitShort = (e: any) => {
     <UModal v-model:open="billOpen" :title="bill?.name ? `Regning · ${bill.name}` : 'Åben hotelregning'">
       <template #body>
         <div v-if="bill" class="space-y-3">
-          <p class="text-sm text-muted">Hold posterne op mod hotellets udskrift, og kryds af. Beløb er inkl. drikkepenge skrevet på regningen.</p>
+          <p v-if="bill.settled" class="flex items-center gap-1.5 rounded-lg bg-elevated px-3 py-2 text-sm"><UIcon name="i-lucide-check" class="size-4 text-success" /> Betalt {{ shortDate(bill.settled_at) }}</p>
+          <p v-else class="text-sm text-muted">Hold posterne op mod hotellets udskrift, og kryds af. Beløb er inkl. drikkepenge skrevet på regningen.</p>
           <div class="divide-y divide-default rounded-lg border border-default">
             <div v-for="r in billRows" :key="r.pending || r.id" class="flex items-center gap-2 px-3 py-2">
               <button type="button" class="flex min-w-0 flex-1 items-center gap-3 text-left" @click="tick(r.id)">
@@ -638,7 +666,8 @@ const splitShort = (e: any) => {
                   <div class="text-xs text-muted">{{ dm(r.occurred_at) }}<template v-if="r.tip"> · {{ r.tip_cash ? `${money(r.tip, r.currency)} drikkepenge givet kontant — ikke med` : `inkl. ${money(r.tip, r.currency)} drikkepenge` }}</template></div>
                 </div>
               </button>
-              <UInput v-if="editing === r.id" v-model="editVal" inputmode="decimal" size="sm" class="w-24" autofocus :ui="{ base: 'text-right tabular-nums' }"
+              <span v-if="bill.settled" class="px-1.5 py-1 text-sm tabular-nums" :class="r.kind === 'credit' ? 'text-success' : ''">{{ money(onBill(r), r.currency) }}</span>
+              <UInput v-else-if="editing === r.id" v-model="editVal" inputmode="decimal" size="sm" class="w-24" autofocus :ui="{ base: 'text-right tabular-nums' }"
                 @keydown.enter.prevent="saveRow(r)" @blur="saveRow(r)" />
               <button v-else type="button" class="rounded-md px-1.5 py-1 text-sm tabular-nums underline decoration-dotted underline-offset-4"
                 :class="r.kind === 'credit' ? 'text-success' : ''" :aria-label="`Ret beløb for ${rowTitle(r)}`" @click="editRow(r)">{{ money(onBill(r), r.currency) }}</button>
@@ -646,6 +675,7 @@ const splitShort = (e: any) => {
               <UButton v-else :to="`/p/${id}/e/${r.id}`" icon="i-lucide-chevron-right" size="xs" variant="ghost" color="neutral" square aria-label="Åbn posten" />
             </div>
           </div>
+          <template v-if="!bill.settled">
           <p class="text-xs text-muted">Tryk på et beløb for at rette det. Hører en post ikke til her, så åbn den og vælg et andet hotel eller “Kort”.</p>
           <form class="flex items-center gap-2" @submit.prevent="addMissing">
             <UInput v-model="nl.description" placeholder="Manglende post" size="sm" class="min-w-0 flex-1" />
@@ -653,16 +683,23 @@ const splitShort = (e: any) => {
             <UButton type="submit" icon="i-lucide-plus" size="sm" square aria-label="Tilføj post" :disabled="!parseAmount(nl.amount)" />
           </form>
           <p class="-mt-2 text-xs text-muted">Minus foran = rabat/credit på regningen.</p>
+          </template>
           <div class="space-y-1 text-sm tabular-nums">
             <div class="flex justify-between font-medium"><span>I alt</span><span>{{ money(bill.amount, bill.currency) }}</span></div>
             <div class="flex justify-between text-xs text-muted"><span>Krydset af</span><span>{{ billTicked }} af {{ billRows.length }}</span></div>
-            <template v-if="bill.deposit">
+            <template v-if="bill.settled">
+              <div v-if="bill.deposit" class="flex justify-between text-muted"><span>Modregnet depositum</span><span>−{{ money(bill.deposit, bill.currency) }}</span></div>
+              <div v-for="py in bill.payments" :key="py.id" class="flex justify-between">
+                <span>Betalt {{ py.method === 'cash' ? 'kontant' : 'med kort' }}<template v-if="personName(py.paid_by)"> af {{ personName(py.paid_by) }}</template></span><span>{{ money(py.amount, py.currency) }}</span>
+              </div>
+            </template>
+            <template v-else-if="bill.deposit">
               <div class="flex justify-between text-muted"><span>Depositum</span><span>−{{ money(bill.deposit, bill.currency) }}</span></div>
               <div v-if="bill.amount >= bill.deposit" class="flex justify-between font-medium"><span>Rest at betale</span><span>{{ money(bill.amount - bill.deposit, bill.currency) }}</span></div>
               <div v-else class="flex justify-between font-medium text-success"><span>Kommer retur</span><span>{{ money(bill.deposit - bill.amount, bill.currency) }}</span></div>
             </template>
           </div>
-          <div class="rounded-lg bg-elevated p-3 text-sm">
+          <div v-if="!bill.settled" class="rounded-lg bg-elevated p-3 text-sm">
             <UFormField label="Hotellets total" help="Skriv beløbet fra hotellets udskrift for at se forskellen">
               <UInput v-model="hotelTotal" inputmode="decimal" :placeholder="money(bill.amount, bill.currency)" class="w-full" :ui="{ base: 'tabular-nums' }" />
             </UFormField>
@@ -676,7 +713,8 @@ const splitShort = (e: any) => {
               </template>
             </div>
           </div>
-          <UButton block size="lg" icon="i-lucide-check" label="Betal regningen" @click="openSettle(bill)" />
+          <UButton v-if="bill.settled" block size="lg" variant="soft" color="neutral" icon="i-lucide-rotate-ccw" label="Genåbn regningen" :loading="reopening" @click="reopenBill" />
+          <UButton v-else block size="lg" icon="i-lucide-check" label="Betal regningen" @click="openSettle(bill)" />
         </div>
       </template>
     </UModal>
