@@ -76,7 +76,7 @@ isoleret testserver med egen build-mappe, egne data og egen port:
 EXPENSES_BUILD_DIR=.nuxt-test EXPENSES_DATA_DIR=<scratch>/testdata NUXT_DEV_USER=test@example.com \
   NUXT_IGNORE_LOCK=1 node node_modules/nuxt/bin/nuxt.mjs dev --host 127.0.0.1 --port 3299
 ```
-Ryd `.nuxt-test` op bagefter. Testdata hører aldrig hjemme i `data/dev` (SHN bruger dev).
+Ryd `.nuxt-test` op bagefter. Testdata hører aldrig hjemme i `data/dev` (Stephan Hjelmdal bruger dev).
 
 ## Deploy
 Prod kører det byggede `.output`. `pnpm build` bygger i `.nuxt-build`, så det ikke støder ind i
